@@ -1,1 +1,93 @@
+name: Build Tortoise WoW with AutoBalance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out upstream Docker build files
+        uses: actions/checkout@v4
+        with:
+          repository: mserajnik/tortoise-deploy
+          ref: master
+          path: upstream
+
+      - name: Prepare build and disable optional AutoBalance SQL imports
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('upstream/docker/server/Dockerfile')
+          content = p.read_text()
+          needle = '  mkdir /build/core/build && \\\n'
+          assert content.count(needle) == 1, 'Upstream Dockerfile layout changed: review before building'
+          content = content.replace(needle,
+              '  rm -rf /build/core/modules/mod-twow-autobalance/data/sql && \\\n' + needle)
+          # Limit make parallelism on smaller hosted CI runners.
+          assert 'make -j"$(nproc)"' in content, 'Upstream build command changed: review first'
+          content = content.replace('make -j"$(nproc)"', 'make -j2')
+          p.write_text(content)
+          PY
+
+      - name: Set lowercase image name
+        shell: bash
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tortoise-autobalance" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish world server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./upstream
+          file: ./upstream/docker/server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:v1
+          build-args: |
+            TORTOISE_REVISION=d9bbcd598a98a41fbf39cae5d630dd72b790d10f
+            TORTOISE_FAIL_ON_PATCH_ERROR=1
+            TORTOISE_MODULES=tw-mod-autoscale=https://github.com/Penqle/tw-mod-autoscale.git@8675af22569674d906479aec0d7883d13d9212bb|tw-mod-leech=https://github.com/Penqle/tw-mod-leech.git@a3667c2c672b885fddc5afd76e48471dafa4eccc|TortoiseBots=https://github.com/Sagiroth/TortoiseBots.git@3298d3e62b603182fe5e23709a333813c9bf8b7b|mod-twow-autobalance=https://github.com/Ildourol/mod-twow-autobalance.git@9e492dfe8d8ed61e3aa91b06a609cb236de73a93
+            TORTOISE_MODULE_CONFIGS=aiplayerbot.conf,modules/mod-twow-autobalance.conf,modules/tortoise_bots.conf,modules/tw-mod-autoscale.conf,modules/tw-mod-leech.conf
+            TORTOISE_MODULE_SQL_MODULES=TortoiseBots
+            TORTOISE_MODULE_BUILD_PACKAGES=libboost-dev libboost-filesystem-dev
+
+      - name: Prepare AutoBalance config for QNAP
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 \
+            'https://raw.githubusercontent.com/Ildourol/mod-twow-autobalance/9e492dfe8d8ed61e3aa91b06a609cb236de73a93/conf/mod-twow-autobalance.conf.dist' \
+            --output mod-twow-autobalance.conf
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('mod-twow-autobalance.conf')
+          data = p.read_text()
+          for old, new in [
+            ('AutoBalance.BotWeight = 1.0', 'AutoBalance.BotWeight = 0.7'),
+            ('AutoBalance.LevelScaling = 1', 'AutoBalance.LevelScaling = 0'),
+          ]:
+            assert data.count(old) == 1, f'Missing or ambiguous configuration: {old}'
+            data = data.replace(old, new)
+          p.write_text(data)
+          PY
+
+      - name: Attach prepared configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: autobalance-qnap-config
+          path: mod-twow-autobalance.conf
+          retention-days: 30
 
