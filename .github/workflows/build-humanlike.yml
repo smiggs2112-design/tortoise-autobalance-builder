@@ -58,6 +58,8 @@ jobs:
           PY
           mkdir -p upstream/enhancements
           cp enhancements/enhance_voices.py upstream/enhancements/enhance_voices.py
+          # Upstream .dockerignore permits only docker/** by default.
+          printf '\n!enhancements/\n!enhancements/**\n' >> upstream/.dockerignore
 
       - name: Set lowercase image name
         shell: bash
