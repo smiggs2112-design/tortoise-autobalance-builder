@@ -341,12 +341,9 @@ scripts_path.write_text(scripts)
 # A specifically named Docker DNS service is allowed under AllowLocalHttp=1.
 # Broad private ranges or arbitrary external plain HTTP remain disallowed.
 provider=provider_path.read_text()
-old='''            if (hostLower == "[::1]" || hostLower == "::1" || hostLower == "127.0.0.1" || hostLower == "localhost")
-                parsed.local = true;'''
-new='''            if (hostLower == "[::1]" || hostLower == "::1" ||
-                hostLower == "127.0.0.1" || hostLower == "localhost" ||
-                hostLower == "tortoise-ollama")
-                parsed.local = true;'''
+old='''                parsed.local = hostLower == "localhost" || hostLower == "127.0.0.1" || hostLower == "::1";'''
+new='''                parsed.local = hostLower == "localhost" || hostLower == "127.0.0.1" ||
+                               hostLower == "::1" || hostLower == "tortoise-ollama";'''
 provider=replace_once(provider,old,new,"Explicit internal Docker DNS endpoint")
 provider_path.write_text(provider)
 print("Applied character equipment, bags, quest counts, identity, safe party commands and private DNS endpoint.")
