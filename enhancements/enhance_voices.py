@@ -224,11 +224,32 @@ command_code=r'''
             std::string botName;
             if (scope == ChatScope::Whisper)
             {
-                botName = whisperTarget; // existing command permission checks still apply
+                // Only translate whispers to verified party bots. Other
+                // whispers pass through as normal human conversation.
+                bool foundBot = false;
+                if (player->GetGroup())
+                {
+                    for (GroupReference* ref = player->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+                    {
+                        Player* member = ref->getSource();
+                        if (member && Script_IsAIControlled(member) &&
+                            Lower(member->GetName()) == Lower(whisperTarget))
+                        {
+                            botName = member->GetName();
+                            foundBot = true;
+                            break;
+                        }
+                    }
+                }
+                if (!foundBot)
+                    return false;
             }
             else
             {
-                for (char const* groupPrefix : {"everyone", "everybody", "all", "party", "guys", "team"})
+                for (char const* groupPrefix : {"can you all", "could you all", "would you all",
+                                                "can everyone", "could everyone", "hey everyone",
+                                                "all of you", "everyone", "everybody", "all",
+                                                "party", "guys", "team", "hey mates"})
                 {
                     if (consume(groupPrefix)) { everyone = true; break; }
                 }
