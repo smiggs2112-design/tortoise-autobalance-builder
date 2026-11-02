@@ -1,0 +1,66 @@
+# Independent QNAP Container Station Ollama app.
+# Requires: docker network create twow-ai
+# The world-server Compose app MUST also attach to external network twow-ai.
+# Do NOT run alongside the current Ollama container with the same model volume.
+name: tortoise-ollama
+
+services:
+  ollama:
+    image: ollama/ollama:0.40.13
+    container_name: tortoise-ollama
+    restart: unless-stopped
+    networks:
+      - twow-ai
+    environment:
+      TZ: Australia/Perth
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_CONTEXT_LENGTH: "2048"
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_MAX_QUEUE: "8"
+      OLLAMA_NO_CLOUD: "1"
+    # No ports published to NAS. Only same Docker network may access it.
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  model-init:
+    image: ollama/ollama:0.40.13
+    restart: "no"
+    networks:
+      - twow-ai
+    environment:
+      OLLAMA_HOST: "http://tortoise-ollama:11434"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if ! ollama show qwen2.5:1.5b >/dev/null 2>&1; then
+          ollama pull qwen2.5:1.5b
+        fi
+        if ! ollama show tortoise-friends-fast >/dev/null 2>&1; then
+          printf 'FROM qwen2.5:1.5b\nPARAMETER num_ctx 2048\nPARAMETER num_thread 4\nPARAMETER temperature 0.75\n' > /tmp/Modelfile
+          ollama create tortoise-friends-fast -f /tmp/Modelfile
+        fi
+        ollama run tortoise-friends-fast "Reply with just: Ready."
+
+networks:
+  twow-ai:
+    external: true
+
+volumes:
+  ollama-models:
+    name: tortoise-wow-ollama
