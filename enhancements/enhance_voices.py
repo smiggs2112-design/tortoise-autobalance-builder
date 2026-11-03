@@ -228,6 +228,8 @@ command_code=r'''
             };
             bool everyone = false;
             std::string botName;
+            bool addressingTank = false;
+            bool addressingHealer = false;
             if (scope == ChatScope::Whisper)
             {
                 // Only translate whispers to verified party bots. Other
@@ -261,16 +263,45 @@ command_code=r'''
                 }
                 if (!everyone && player->GetGroup())
                 {
-                    for (GroupReference* ref = player->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+                    addressingTank = consume("tank") || consume("hey tank");
+                    addressingHealer = !addressingTank &&
+                        (consume("healer") || consume("hey healer"));
+                    if (addressingTank || addressingHealer)
                     {
-                        Player* member = ref->getSource();
-                        if (member && member != player && Script_IsAIControlled(member))
+                        Player* single = nullptr;
+                        for (GroupReference* ref = player->GetGroup()->GetFirstMember(); ref; ref = ref->next())
                         {
-                            std::string candidate = Lower(member->GetName());
-                            if (consume(candidate) || consume("hey " + candidate))
+                            Player* member = ref->getSource();
+                            if (!member || member == player || !Script_IsAIControlled(member))
+                                continue;
+                            uint8 cls = member->GetClass();
+                            bool candidate = addressingTank ?
+                                (cls == CLASS_WARRIOR || cls == CLASS_PALADIN || cls == CLASS_DRUID) :
+                                (cls == CLASS_PRIEST || cls == CLASS_PALADIN ||
+                                 cls == CLASS_DRUID || cls == CLASS_SHAMAN);
+                            if (!candidate)
+                                continue;
+                            if (single)
+                                return false; // ambiguous role: do not guess
+                            single = member;
+                        }
+                        if (!single)
+                            return false;
+                        botName = single->GetName();
+                    }
+                    else
+                    {
+                        for (GroupReference* ref = player->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+                        {
+                            Player* member = ref->getSource();
+                            if (member && member != player && Script_IsAIControlled(member))
                             {
-                                botName = member->GetName();
-                                break;
+                                std::string candidate = Lower(member->GetName());
+                                if (consume(candidate) || consume("hey " + candidate))
+                                {
+                                    botName = member->GetName();
+                                    break;
+                                }
                             }
                         }
                     }
@@ -305,8 +336,8 @@ command_code=r'''
             else if (everyone && (utterance == "attack my target" ||
                                   utterance == "attack that target"))
                 command = ".bot action attack";
-            else if (everyone && (utterance == "pull my target" ||
-                                  utterance == "pull that target"))
+            else if ((everyone || addressingTank) &&
+                     (utterance == "pull my target" || utterance == "pull that target"))
                 command = ".bot action pull";
             else if (everyone && (utterance == "interrupt that" ||
                                   utterance == "interrupt my target"))
