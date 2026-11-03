@@ -12,6 +12,10 @@ on:
       - "docs/**"
   workflow_dispatch:
 
+concurrency:
+  group: voices-deterministic-v3
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
