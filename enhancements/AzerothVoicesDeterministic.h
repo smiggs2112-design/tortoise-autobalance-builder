@@ -164,30 +164,89 @@ namespace Deterministic
             }
         }
 
+        static std::set<std::string> SignificantWords(std::string const& phrase)
+        {
+            static std::set<std::string> const stop = {
+                "what", "which", "where", "when", "why", "how", "does", "are",
+                "can", "you", "your", "the", "then", "that", "this", "for",
+                "with", "from", "about", "some", "have", "has", "into",
+                "there", "them", "they", "would", "could", "should",
+                "and", "who", "its", "out"
+            };
+            std::set<std::string> terms;
+            std::istringstream parts(Normalise(phrase));
+            std::string word;
+            while (parts >> word)
+            {
+                if (word.size() > 5 && word.back() == 's')
+                    word.pop_back();
+                if (word.size() >= 3 && !stop.count(word))
+                    terms.insert(word);
+            }
+            return terms;
+        }
+
         bool Lookup(std::string const& text, std::string& answer)
         {
             LoadKnowledge();
-            // High precision: phrase aliases must appear in the player's question.
-            // If multiple records score equally, defer to Ollama rather than guess.
+            // Literal phrases first, preferring the longest unambiguous match.
             size_t best = 0;
             size_t bestLength = 0;
             bool tied = false;
             for (size_t i = 0; i < knowledge.size(); ++i)
-            {
                 for (std::string const& phrase : knowledge[i].phrases)
                 {
-                    if (phrase.size() <= bestLength || !Has(text, phrase))
+                    if (!Has(text, phrase))
                         continue;
-                    best = i;
-                    bestLength = phrase.size();
-                    tied = false;
-                }
-                for (std::string const& phrase : knowledge[i].phrases)
-                    if (phrase.size() == bestLength && bestLength > 0 &&
-                        Has(text, phrase) && best != i)
+                    if (phrase.size() > bestLength)
+                    {
+                        bestLength = phrase.size();
+                        best = i;
+                        tied = false;
+                    }
+                    else if (phrase.size() == bestLength && best != i)
                         tied = true;
+                }
+            if (bestLength)
+            {
+                if (tied)
+                    return false;
+                answer = knowledge[best].answer;
+                return true;
             }
-            if (!bestLength || tied)
+
+            // Cheap morphology-aware matching for equivalent phrasings.
+            // Require two distinctive words and >=80% alias coverage.
+            // A tie across entries defers to Ollama instead of guessing.
+            std::set<std::string> const words = SignificantWords(text);
+            float bestScore = 0.0f;
+            best = 0;
+            tied = false;
+            for (size_t i = 0; i < knowledge.size(); ++i)
+                for (std::string const& alias : knowledge[i].phrases)
+                {
+                    std::set<std::string> const terms = SignificantWords(alias);
+                    if (terms.size() < 2)
+                        continue;
+                    uint32_t matched = 0;
+                    for (std::string const& term : terms)
+                        if (words.count(term))
+                            ++matched;
+                    float coverage = static_cast<float>(matched) /
+                        static_cast<float>(terms.size());
+                    if (matched < 2 || coverage < 0.80f)
+                        continue;
+                    float score = matched * 10.0f + coverage;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = i;
+                        tied = false;
+                    }
+                    else if (score == bestScore && best != i)
+                        tied = true;
+                }
+            if (bestScore == 0.0f || tied)
                 return false;
             answer = knowledge[best].answer;
             return true;
