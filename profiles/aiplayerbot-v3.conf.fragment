@@ -1,0 +1,19 @@
+# Overlay into existing aiplayerbot.conf. Leave combat/raid AI untouched.
+# Verify these keys against your pinned TortoiseBots revision if changing
+# from a newer upstream example. Do not replace the full live config.
+
+# Existing open-world TortoiseBots greetings and social activities.
+AiPlayerbot.EnableGreet = 1
+AiPlayerbot.RandomBotGreet = 1
+AiPlayerbot.GreetCooldown = 600
+AiPlayerbot.RandomBotInvitePlayer = 1
+
+# Prevent noisy autonomous broadcast text in an 800-1200 bot environment.
+AiPlayerbot.EnableBroadcasts = 0
+AiPlayerbot.BroadcastChanceSuggestThunderfury = 0
+
+# Party preparation, without changing combat rotations.
+AiPlayerbot.ForceRebuffOnReadyCheck = 1
+
+# Optional: turn on only if world ticks and autonomous pathing remain healthy.
+# AiPlayerbot.RandomBotGroupNearby = 1
