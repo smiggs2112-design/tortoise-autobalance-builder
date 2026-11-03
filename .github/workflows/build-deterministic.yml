@@ -57,7 +57,7 @@ jobs:
           p.write_text(content)
           PY
           mkdir -p upstream/enhancements
-          cp enhancements/* upstream/enhancements/
+          cp enhancements/enhance_voices.py enhancements/AzerothVoicesDeterministic.h enhancements/humanlike-knowledge.tsv upstream/enhancements/
           # Upstream .dockerignore permits only docker/** by default.
           printf '\n!enhancements/\n!enhancements/**\n' >> upstream/.dockerignore
 
