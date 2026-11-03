@@ -4,11 +4,17 @@
 No edits to TortoiseBots or AutoBalance. Run after all modules are cloned.
 """
 from pathlib import Path
+from shutil import copyfile
 
 root = Path("/build/core/modules/mod-azeroth-voices/src")
 manager_path = root / "AzerothVoicesManager.cpp"
 scripts_path = root / "AzerothVoicesScripts.cpp"
 provider_path = root / "AzerothVoicesProvider.cpp"
+copyfile("/build/enhancements/AzerothVoicesDeterministic.h",
+         root / "AzerothVoicesDeterministic.h")
+knowledge_target = Path("/opt/tortoise/data/humanlike-knowledge.tsv")
+knowledge_target.parent.mkdir(parents=True, exist_ok=True)
+copyfile("/build/enhancements/humanlike-knowledge.tsv", knowledge_target)
 
 
 def replace_once(value, before, after, label):
@@ -172,7 +178,7 @@ manager_path.write_text(manager)
 scripts=scripts_path.read_text()
 scripts=replace_once(scripts,
     '#include "AzerothVoicesManager.h"',
-    '#include "AzerothVoicesManager.h"\n#include "AzerothVoicesBotSeam.h"\n#include "Chat/Chat.h"\n#include "Group.h"',
+    '#include "AzerothVoicesManager.h"\n#include "AzerothVoicesBotSeam.h"\n#include "AzerothVoicesDeterministic.h"\n#include "Chat/Chat.h"\n#include "Group.h"',
     "Safe command dependencies")
 
 # No generated LLM text is executed as a command. This is an explicit allowlist
@@ -317,6 +323,10 @@ command_code=r'''
 '''
 anchor='''        class AzerothVoicesWorldScript final : public WorldScript'''
 scripts=replace_once(scripts,anchor,command_code+anchor,"Insert safe natural-language bridge")
+scripts=replace_once(scripts,
+    "                Manager::Instance().Update(diff);",
+    "                Manager::Instance().Update(diff);\n                Deterministic::Instance().Tick(diff);",
+    "Schedule offline bot social conversations")
 old='''                ChatScope scope;
                 if (ToScope(type, scope))
                     Manager::Instance().HandleChat(player, scope, message, "");'''
@@ -328,12 +338,17 @@ new='''                ChatScope scope;
                         message.clear();
                         return;
                     }
+                    if (Deterministic::Instance().TryQuestion(player, scope, message))
+                        return; // keep human chat visible and skip Ollama
                     Manager::Instance().HandleChat(player, scope, message, "");
                 }'''
 scripts=replace_once(scripts,old,new,"Party and say command handling")
 old='''                            Manager::Instance().HandleChat(session->GetPlayer(), ChatScope::Whisper, message, to);'''
 new='''                            if (TryNaturalBotInstruction(session->GetPlayer(), ChatScope::Whisper, message, to))
                                 return false; // handled locally; do not send the command as a whisper
+                            if (Deterministic::Instance().TryQuestion(session->GetPlayer(),
+                                                                          ChatScope::Whisper, message, to))
+                                return false; // answer locally, skip Ollama
                             Manager::Instance().HandleChat(session->GetPlayer(), ChatScope::Whisper, message, to);'''
 scripts=replace_once(scripts,old,new,"Whisper command handling")
 scripts_path.write_text(scripts)
@@ -346,4 +361,4 @@ new='''                parsed.local = hostLower == "localhost" || hostLower == "
                                hostLower == "::1" || hostLower == "tortoise-ollama";'''
 provider=replace_once(provider,old,new,"Explicit internal Docker DNS endpoint")
 provider_path.write_text(provider)
-print("Applied character equipment, bags, quest counts, identity, safe party commands and private DNS endpoint.")
+print("Applied character equipment, bags, quest counts, identity, safe commands, offline QA, social dialogue, and private DNS endpoint.")
