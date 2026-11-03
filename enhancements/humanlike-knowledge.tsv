@@ -1,0 +1,60 @@
+# id\tquestion phrases separated by |\tverified answer\tsource (Vanilla/Turtle verification)
+attributes.spirit	what does spirit do|what is spirit for|spirit stat|explain spirit	Spirit is mainly associated with health and mana regeneration. Its value depends on your class and build.	WoW Classic mechanics
+attributes.stamina	what does stamina do|what is stamina for|stamina stat	Stamina increases your maximum health.	WoW Classic mechanics
+attributes.intellect	what does intellect do|what is intellect for|intellect stat	Intellect increases mana for mana-using classes and contributes to spell critical chance in this ruleset.	WoW 1.12 mechanics
+attributes.strength	what does strength do|what is strength for|strength stat	Strength affects melee attack power for several classes and can contribute to shield blocking.	WoW 1.12 mechanics
+attributes.agility	what does agility do|what is agility for|agility stat	Agility affects armour, dodge and critical strike chance, with attack-power benefits depending on class.	WoW 1.12 mechanics
+attributes.armour	what does armour do|what is armor for|what is armour for|armour stat	Armour reduces incoming physical damage. It does not provide the same protection against spells.	WoW Classic mechanics
+attributes.hit	what is hit chance|what does hit do|miss chance explanation|how does hit work	Hit chance helps attacks and spells avoid missing. Exact requirements depend on level and target.	WoW 1.12 mechanics
+attributes.defence	what does defense do|what does defence do|defense skill|defence skill	Defence skill influences avoidance and the chance enemies critically hit you.	WoW Classic mechanics
+combat.threat	how does threat work|what is threat|how does aggro work|what is aggro	Threat determines which party member an enemy is likely to attack. Tanks try to hold it while others manage theirs.	WoW Classic mechanics
+combat.taunt	what does taunt do|how does taunt work|what is taunting	Taunt makes an enemy focus the tank for a short time and interacts with the threat table. It is not a permanent threat lead.	WoW Classic mechanics
+combat.los	what is line of sight|what does los mean|line of sight pulling|what is los	Line of sight means whether a character can see a target for attacks or spells. Tanks can use corners to gather ranged enemies.	WoW Classic mechanics
+combat.cc	what does cc mean|what is crowd control|why crowd control	CC is crowd control: abilities that temporarily disable or restrict enemies so the group handles fewer threats at once.	WoW Classic mechanics
+combat.interrupt	what is interrupting|how do interrupts work|why interrupt	Interrupting stops an enemy cast when timed correctly. The interrupt must be available and in range.	WoW Classic mechanics
+combat.aoe	what does aoe mean|what is aoe	AoE means area of effect: an ability that affects multiple targets or an area.	WoW Classic mechanics
+combat.cooldown	what does cooldown mean|what is a cooldown	A cooldown is the time you must wait before using an ability again.	WoW Classic mechanics
+combat.dps	what does dps mean|what is dps	DPS means damage per second, or describes a party role focused on damage.	WoW Classic mechanics
+combat.tank	what does a tank do|what is a tank role|what does tank mean	A tank tries to control enemy attention and survive incoming damage while the group fights.	WoW Classic mechanics
+combat.healer	what does a healer do|what is a healer role|what does healer mean	Healers restore health, remove certain harmful effects and manage mana during fights.	WoW Classic mechanics
+combat.pull	what does pull mean|what is a pull in dungeon|what does pulling mean	A pull begins combat with a selected enemy or pack, ideally under the group's control.	WoW Classic mechanics
+combat.ready	what is a ready check|how does ready check work	A ready check asks group members whether they are prepared to proceed.	WoW Classic mechanics
+group.party	how many players in a party|party size limit|what is a party	A standard WoW party has up to five members.	WoW Classic mechanics
+group.raid	what is a raid group|what is a raid|raid party difference	A raid is a larger organised group used for raid encounters. Vanilla raids can have up to forty members.	WoW 1.12 mechanics
+world.hearthstone	what is a hearthstone|how does a hearthstone work|hearthstone teleport	A hearthstone returns you to your bound inn or home location, subject to its cooldown.	WoW Classic mechanics
+world.flight	what are flight paths|how do flight paths work|what is a flight master	Flight masters provide transport between discovered flight points for a fee.	WoW Classic mechanics
+world.inn	what does an innkeeper do|what is an innkeeper	An innkeeper can set your hearthstone location. Resting in an inn also helps accumulate rested experience.	WoW Classic mechanics
+world.rested	what is rested xp|how does rested experience work|what does rested mean	Rested experience gives a bonus to experience from eligible kills while rested points remain. Inns and cities accumulate it faster.	WoW Classic mechanics
+world.graveyard	how do corpse runs work|what happens when you die|corpse run explained	After dying, you can generally return to your corpse as a ghost or use a spirit healer, with different consequences.	WoW Classic mechanics
+world.durability	how does durability work|what happens when gear breaks|how do i repair gear	Equipment loses durability through play and death. Repair vendors restore it for money.	WoW Classic mechanics
+world.bank	what is the bank for|how does bank storage work|where do i store items	Bankers provide storage beyond your carried bags. You can access it at banks in major settlements.	WoW Classic mechanics
+world.mail	what is a mailbox for|how does mail work|send items by mail	Mailboxes let you send in-game messages, money and permitted items to other characters.	WoW Classic mechanics
+world.auction	how does auction house work|what is an auction house|how do auctions work	Auction houses let players list items for others to bid on or buy, usually with fees.	WoW Classic mechanics
+items.soulbound	what does soulbound mean|what is soulbound|why is item soulbound	Soulbound items are tied to a character and generally cannot be traded to another player.	WoW Classic mechanics
+items.boe	what does bind on equip mean|what is boe|bind on equip explanation	Bind on Equip items become soulbound when equipped, rather than when first obtained.	WoW Classic mechanics
+items.bop	what is bind on pickup|what does bop mean|bind on pickup explanation	Bind on Pickup items become soulbound when acquired.	WoW Classic mechanics
+items.quality	what do item colours mean|what does green gear mean|item quality colours	Common WoW item quality colours include white for common, green for uncommon, blue for rare and purple for epic.	WoW Classic mechanics
+professions.primary	how many professions can i learn|primary professions limit|how many main professions	Characters can normally learn up to two primary professions, alongside secondary skills.	WoW Classic mechanics
+professions.mining	how does mining work|what does mining do|where to learn mining	Mining gathers ore from mineral nodes. Learn it from a mining trainer and carry the required tools where applicable.	WoW Classic mechanics
+professions.skinning	what is skinning for|how does skinning work|how do i skin mobs	Skinning collects hides and leather from eligible slain creatures after they have been looted.	WoW Classic mechanics
+professions.herbalism	how does herbalism work|what is herbalism for|how do i pick herbs	Herbalism gathers herbs from nodes in the world. Herbs are often used in Alchemy.	WoW Classic mechanics
+professions.alchemy	what does alchemy do|how does alchemy work	Alchemy uses gathered materials to create potions, elixirs and other consumables.	WoW Classic mechanics
+professions.enchanting	what does enchanting do|how does enchanting work	Enchanting applies magical improvements to eligible equipment and can disenchant many items.	WoW Classic mechanics
+professions.firstaid	what is first aid for|how do bandages work|first aid skill	First Aid creates bandages for healing outside direct spellcasting. Bandages cannot be used repeatedly without a short lockout.	WoW Classic mechanics
+professions.fishing	how do i fish|how does fishing work|what is fishing for	Fishing catches fish and other items from bodies of water using a fishing skill and rod.	WoW Classic mechanics
+professions.cooking	how does cooking work|what is cooking for	Cooking prepares food that restores health and sometimes provides temporary benefits.	WoW Classic mechanics
+group.follow	how to tell bots follow|how do i make bots follow|bot follow command	For your TortoiseBots party use .bot action follow, or ask them to follow in normal chat if the command bridge is enabled.	TortoiseBots commands
+group.rebuff	how to make bots buff|how to rebuff party|bot rebuff command	Use .bot action rebuff to refresh expiring group buffs, or ask the party to rebuff in chat.	TortoiseBots commands
+group.stop	how to stop bots attacking|stop bot combat command|bot action stop command	Use .bot action stop to clear current attacks and combat queues.	TortoiseBots commands
+group.inspect	how to inspect a bot|how to see bot inventory|bot inv command	Use .bot inv followed by the bot's name to inspect its equipment and inventory.	TortoiseBots commands
+group.whisper	how to whisper bots|how do i send bot commands|bot whisper commands	You can whisper a bot directly or use .bot command followed by its name and a supported command.	TortoiseBots commands
+world.stormwind	what is stormwind|where is stormwind	Stormwind is the human capital city in Elwynn Forest in the Eastern Kingdoms.	WoW Classic world
+world.orgrimmar	what is orgrimmar|where is orgrimmar	Orgrimmar is the orc capital city in Durotar on Kalimdor.	WoW Classic world
+world.ironforge	what is ironforge|where is ironforge	Ironforge is the dwarf capital city in Dun Morogh.	WoW Classic world
+world.darnassus	what is darnassus|where is darnassus	Darnassus is the night elf capital on Teldrassil in the classic-era world.	WoW Classic world
+world.scarletmonastery	what is scarlet monastery|where is scarlet monastery	Scarlet Monastery is a dungeon complex in Tirisfal Glades. Its wings have different recommended levels.	WoW Classic world
+world.deadmines	what are the deadmines|where are the deadmines	The Deadmines are a low-level dungeon in Westfall, accessed through the mine near Moonbrook.	WoW Classic world
+world.wailingcaverns	where are the wailing caverns|what are wailing caverns	Wailing Caverns is a low-level dungeon in the Northern Barrens.	WoW Classic world
+world.ragefire	where is ragefire chasm|what is ragefire chasm	Ragefire Chasm is a low-level dungeon inside Orgrimmar.	WoW Classic world
+world.blackrockdepths	where is blackrock depths|what is blackrock depths	Blackrock Depths is a large high-level dungeon within Blackrock Mountain.	WoW Classic world
+world.stratholme	where is stratholme|what is stratholme	Stratholme is a high-level dungeon in the Eastern Plaguelands.	WoW Classic world
