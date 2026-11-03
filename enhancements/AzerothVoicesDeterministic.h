@@ -21,6 +21,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <sys/stat.h>
 #include <string>
 #include <utility>
 #include <vector>
@@ -128,6 +129,9 @@ namespace Deterministic
         };
         std::vector<Knowledge> knowledge;
         bool loaded = false;
+        Moment nextKnowledgePoll = Moment();
+        std::time_t lastKnowledgeMtime = 0;
+        long long lastKnowledgeSize = -1;
 
         void LoadKnowledge()
         {
@@ -138,7 +142,7 @@ namespace Deterministic
             std::string line;
             while (std::getline(input, line) && knowledge.size() < 3000)
             {
-                if (line.empty() || line[0] == '#')
+                if (line.empty() || line[0] == '#' || line.size() > 1200)
                     continue;
                 std::vector<std::string> fields;
                 std::stringstream row(line);
@@ -613,6 +617,23 @@ namespace Deterministic
             (void) diff;
             // Late reply: no LLM and no recursion from bot-originated /say.
             auto now = Clock::now();
+            // Hot-reload the mounted, read-only TSV without rebuilding or
+            // restarting mangosd. This is a bounded 60-second filesystem check.
+            if (now >= nextKnowledgePoll)
+            {
+                nextKnowledgePoll = now + std::chrono::seconds(60);
+                struct stat kb = {};
+                if (::stat("/opt/tortoise/data/humanlike-knowledge.tsv", &kb) == 0 &&
+                    (lastKnowledgeMtime != kb.st_mtime ||
+                     lastKnowledgeSize != static_cast<long long>(kb.st_size)))
+                {
+                    knowledge.clear();
+                    loaded = false;
+                    LoadKnowledge();
+                    lastKnowledgeMtime = kb.st_mtime;
+                    lastKnowledgeSize = static_cast<long long>(kb.st_size);
+                }
+            }
             for (auto it = pending.begin(); it != pending.end(); )
             {
                 if (now < it->due) { ++it; continue; }
