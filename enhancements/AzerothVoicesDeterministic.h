@@ -267,7 +267,7 @@ namespace Deterministic
             uint32_t seen = 0;
             for (uint32_t slot = 0; slot < MAX_QUEST_LOG_SIZE && seen < 2; ++slot)
             {
-                uint32_t id = bot->GetQuestSlotQuestId(slot);
+                uint32_t id = GetPlayerQuestSlotQuestId(bot, slot);
                 Quest const* quest = id ? sObjectMgr.GetQuestTemplate(id) : nullptr;
                 if (!quest)
                     continue;
@@ -685,7 +685,7 @@ namespace Deterministic
                 uint32_t sharedQuest = 0;
                 for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE && !sharedQuest; ++slot)
                 {
-                    uint32_t const q = one->GetQuestSlotQuestId(slot);
+                    uint32_t const q = GetPlayerQuestSlotQuestId(one, slot);
                     if (q && one->GetQuestStatus(q) == QUEST_STATUS_INCOMPLETE &&
                         two->GetQuestStatus(q) == QUEST_STATUS_INCOMPLETE)
                         sharedQuest = q;
