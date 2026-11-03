@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/build-deterministic.yml"
       - "enhancements/**"
+      - "profiles/**"
+      - "tests/**"
       - "deploy/**"
       - "docs/**"
   workflow_dispatch:
@@ -21,9 +23,11 @@ jobs:
       - name: Check out enhanced candidate build repository
         uses: actions/checkout@v4
 
-      - name: Validate enhancements syntax
+      - name: Validate enhancement syntax and knowledge catalogue
         shell: bash
-        run: python3 -m py_compile enhancements/enhance_voices.py
+        run: |
+          python3 -m py_compile enhancements/enhance_voices.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
 
       - name: Check out upstream Docker build files
         uses: actions/checkout@v4
@@ -92,3 +96,13 @@ jobs:
             TORTOISE_MODULE_BUILD_PACKAGES=libboost-dev libboost-filesystem-dev
 
 
+
+      - name: Attach QNAP deterministic profiles and knowledge
+        uses: actions/upload-artifact@v4
+        with:
+          name: voices-deterministic-qnap
+          path: |
+            profiles/
+            enhancements/humanlike-knowledge.tsv
+            docs/
+          retention-days: 30
