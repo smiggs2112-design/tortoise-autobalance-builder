@@ -6,6 +6,7 @@
 #include "AzerothVoicesBotSeam.h"
 #include "Group.h"
 #include "Item.h"
+#include "Bag.h"
 #include "ObjectMgr.h"
 #include "QuestDef.h"
 #include "SpellMgr.h"
@@ -16,6 +17,7 @@
 #include <cctype>
 #include <cstdint>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <set>
 #include <sstream>
@@ -343,6 +345,13 @@ namespace Deterministic
         Topic Recognise(std::string const& q, std::string const& original,
                         Topic previous) const
         {
+            // General mechanics are not a question about this bot's own
+            // health/mana/level. Prefer the offline knowledge catalogue.
+            if ((Any(q, {"what is", "what does", "how does", "explain",
+                         "what level is", "how to"}) &&
+                 !Any(q, {"your", "you", "yours", "my", "mine"})) &&
+                IsQuestion(q, original))
+                return Topic::Knowledge;
             if (Any(q, {"what next", "where next", "what should we do",
                         "where should we go", "what quest next", "what do we do now"}))
                 return Topic::NextQuest;
@@ -415,10 +424,17 @@ namespace Deterministic
             switch (topic)
             {
                 case Topic::Money:
-                    answer = "I've got " + Coins(bot->GetMoney()) + ".";
+                {
+                    std::string const funds = Coins(bot->GetMoney());
                     if (Any(q, {"rich", "wealthy", "loaded", "lots of gold"}))
-                        answer += " Depends what we're buying.";
+                        answer = (bot->GetLevel() > 20 ? "Hardly rolling in it. " : "Not bad for my level. ") +
+                            std::string("I've got ") + funds + ".";
+                    else if (bot->GetObjectGuid().GetRawValue() % 3 == 0)
+                        answer = "Only " + funds + " on me.";
+                    else
+                        answer = "I've got " + funds + ".";
                     break;
+                }
                 case Topic::Weapon:
                 {
                     Item* main = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
