@@ -1,0 +1,112 @@
+name: Build Voices Intelligence v4 (pinned gameplay engines)
+
+on:
+  push:
+    branches: [voices-intelligence-v4]
+    paths:
+      - ".github/workflows/build-intelligence.yml"
+      - "enhancements/**"
+      - "profiles/**"
+      - "tests/**"
+      - "deploy/**"
+      - "docs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: voices-intelligence-v4
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out enhanced candidate build repository
+        uses: actions/checkout@v4
+
+      - name: Validate enhancement syntax and knowledge catalogue
+        shell: bash
+        run: |
+          python3 -m py_compile enhancements/enhance_voices.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Check out upstream Docker build files
+        uses: actions/checkout@v4
+        with:
+          repository: mserajnik/tortoise-deploy
+          ref: ab25e5888cda2664ea197073c181f787c4a59583
+          path: upstream
+
+      - name: Prepare build and disable optional AutoBalance SQL imports
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('upstream/docker/server/Dockerfile')
+          content = p.read_text()
+          copy_marker = 'COPY ./docker/patches /build/patches'
+          assert content.count(copy_marker) == 1, 'Missing Dockerfile COPY anchor'
+          content = content.replace(copy_marker, copy_marker +
+              '\nCOPY ./enhancements /build/enhancements')
+          apt_marker = '    build-essential \\\n'
+          assert content.count(apt_marker) == 1, 'Missing apt list anchor'
+          content = content.replace(apt_marker, apt_marker + '    python3 \\\n')
+          needle = '  mkdir /build/core/build && \\\n'
+          assert content.count(needle) == 1, 'Upstream Dockerfile layout changed: review before building'
+          content = content.replace(needle,
+              '  rm -rf /build/core/modules/mod-twow-autobalance/data/sql && \\\n'
+              '  python3 /build/enhancements/enhance_voices.py && \\\n' + needle)
+          # Limit make parallelism on smaller hosted CI runners.
+          assert 'make -j"$(nproc)"' in content, 'Upstream build command changed: review first'
+          content = content.replace('make -j"$(nproc)"', 'make -j2')
+          p.write_text(content)
+          PY
+          mkdir -p upstream/enhancements
+          cp enhancements/enhance_voices.py enhancements/AzerothVoicesDeterministic.h enhancements/AzerothVoicesIntelligenceV4.h enhancements/humanlike-knowledge.tsv upstream/enhancements/
+          # Upstream .dockerignore permits only docker/** by default.
+          printf '\n!enhancements/\n!enhancements/**\n' >> upstream/.dockerignore
+
+      - name: Set lowercase image name
+        shell: bash
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tortoise-autobalance" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish world server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./upstream
+          file: ./upstream/docker/server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:voices-intelligence-candidate,${{ env.IMAGE }}:voices-${{ github.sha }}
+          build-args: |
+            TORTOISE_REVISION=d9bbcd598a98a41fbf39cae5d630dd72b790d10f
+            TORTOISE_FAIL_ON_PATCH_ERROR=1
+            TORTOISE_MODULES=tw-mod-autoscale=https://github.com/Penqle/tw-mod-autoscale.git@8675af22569674d906479aec0d7883d13d9212bb|tw-mod-leech=https://github.com/Penqle/tw-mod-leech.git@a3667c2c672b885fddc5afd76e48471dafa4eccc|TortoiseBots=https://github.com/Sagiroth/TortoiseBots.git@3298d3e62b603182fe5e23709a333813c9bf8b7b|mod-azeroth-voices=https://github.com/Ildourol/mod-twow-azeroth-voices.git@b76ba4c10d44b41cac284699769ea789f735a567|mod-twow-autobalance=https://github.com/Ildourol/mod-twow-autobalance.git@9e492dfe8d8ed61e3aa91b06a609cb236de73a93
+            TORTOISE_MODULE_CONFIGS=aiplayerbot.conf,modules/mod-azeroth-voices.conf,modules/mod-twow-autobalance.conf,modules/tortoise_bots.conf,modules/tw-mod-autoscale.conf,modules/tw-mod-leech.conf
+            TORTOISE_MODULE_SQL_MODULES=TortoiseBots,mod-azeroth-voices
+            TORTOISE_MODULE_BUILD_PACKAGES=libboost-dev libboost-filesystem-dev
+
+
+
+      - name: Attach QNAP deterministic profiles and knowledge
+        uses: actions/upload-artifact@v4
+        with:
+          name: voices-intelligence-qnap
+          path: |
+            profiles/
+            enhancements/humanlike-knowledge.tsv
+            docs/
+          retention-days: 30
