@@ -651,7 +651,7 @@ namespace Deterministic
                 }
                 case Topic::Knowledge:
                     if (!Lookup(q, answer) &&
-                        !IntelligenceV4::Knowledge().Search(q, answer))
+                        !IntelligenceV4::Knowledge().Search(q, answer, speaker))
                         return false; // unknown/unreliable knowledge -> Ollama
                     break;
                 default:
