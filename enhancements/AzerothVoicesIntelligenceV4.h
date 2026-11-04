@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <initializer_list>
 #include <cmath>
 #include <map>
 #include <set>
@@ -94,6 +95,24 @@ inline std::string ItemLabel(uint32_t entry)
     ItemPrototype const* item = sObjectMgr.GetItemPrototype(entry);
     if (item && !item->Name1.empty()) return item->Name1;
     return "quest item";
+}
+
+// Reuse the existing ObjectMgr spawn selector. It's a bounded on-demand
+// lookup only, not navigation and not a promise that the creature is alive.
+inline std::string SpawnHint(Player* player, uint32_t creatureEntry)
+{
+    if (!player || !creatureEntry) return "";
+    FindCreatureData finder(creatureEntry, player);
+    sObjectMgr.DoCreatureData(finder);
+    CreatureDataPair const* found = finder.GetResult();
+    if (!found || found->second.position.mapId != player->GetMapId())
+        return "";
+    std::ostringstream out;
+    out << " A recorded spawn on this map is near world X "
+        << static_cast<int>(found->second.position.x)
+        << ", Y " << static_cast<int>(found->second.position.y)
+        << " (not a pathfinding route).";
+    return out.str();
 }
 
 // The plan is based on the *human's* quest log, never just the bot's.
@@ -187,6 +206,8 @@ inline bool QuestPlan(Player* human, Player* companion, std::string& answer,
             if (!goal || progress->m_creatureOrGOcount[i] >= goal) continue;
             uint32_t remain = goal - progress->m_creatureOrGOcount[i];
             out << "You still need " << remain << " " << CreatureLabel(q->ReqCreatureOrGOId[i]) << ". ";
+            if (q->ReqCreatureOrGOId[i] > 0)
+                out << SpawnHint(human, static_cast<uint32_t>(q->ReqCreatureOrGOId[i]));
             foundObjective = true;
             break;
         }
@@ -310,7 +331,8 @@ struct Index
         return ambiguous ? nullptr : found;
     }
 
-    bool Search(std::string const& input, std::string& answer)
+    bool Search(std::string const& input, std::string& answer,
+                Player* speaker = nullptr)
     {
         std::string question = Normalise(input);
         ++lookups;
@@ -372,7 +394,13 @@ struct Index
                 out << "-" << creature->level_max;
             out << ".";
             if (Any(question, {"where", "location", "find", "spawn"}))
-                out << " I can't confirm its location from the template alone.";
+            {
+                std::string hint = SpawnHint(speaker, match->id);
+                if (hint.empty())
+                    out << " I can't verify a spawn on your current map.";
+                else
+                    out << hint;
+            }
             answer = Limit(out.str()); ++hits; return true;
         }
 
@@ -436,8 +464,12 @@ inline bool SpellReadiness(Player* bot, std::string const& input, std::string& a
     bool const cooldown = bot->HasSpellCooldown(pickedId) ||
                           bot->HasSpellCategoryCooldown(picked->Category);
     if (cooldown) out << "It's on cooldown. ";
-    bool const enoughPower = bot->GetPower(static_cast<Powers>(picked->powerType)) >= picked->manaCost;
-    if (!enoughPower) out << "I don't have enough resource for its base cost. ";
+    // No invalid power index access if a custom spell has a special power
+    // type; skip the power claim and let the real engine validate the cast.
+    bool const knownPower = picked->powerType <= static_cast<uint32_t>(POWER_ENERGY);
+    bool const enoughPower = !knownPower ||
+        bot->GetPower(static_cast<Powers>(picked->powerType)) >= picked->manaCost;
+    if (knownPower && !enoughPower) out << "I don't have enough resource for its base cost. ";
     bool reagents = true;
     for (uint32_t j=0; j<MAX_SPELL_REAGENTS; ++j)
     {
@@ -448,7 +480,7 @@ inline bool SpellReadiness(Player* bot, std::string const& input, std::string& a
         }
     }
     if (!reagents) out << "I'm missing a required reagent. ";
-    if (!cooldown && enoughPower && reagents)
+    if (!cooldown && enoughPower && reagents && knownPower)
         out << "My cooldown, basic resource and reagent checks pass. ";
     out << "Target, range and cast restrictions still need checking.";
     answer = Limit(out.str(), 240);
