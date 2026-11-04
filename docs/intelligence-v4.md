@@ -109,6 +109,9 @@ ghcr.io/smiggs2112-design/tortoise-autobalance:voices-<full builder commit SHA>
 ```
 
 Use this commit-specific tag for testing and record the published digest.
+CI pulls the published digest and runs `mangosd --version` plus a packaged
+catalogue check with networking disabled and a read-only container filesystem.
+This verifies binary loading and packaging; it starts no world and tests no DB.
 `voices-intelligence-candidate` is a moving convenience tag. The workflow also
 attaches profiles, catalogue and documentation as `voices-intelligence-qnap`.
 

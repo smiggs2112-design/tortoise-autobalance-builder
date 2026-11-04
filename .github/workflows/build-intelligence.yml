@@ -100,6 +100,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish world server image
+        id: image
         uses: docker/build-push-action@v6
         with:
           context: ./upstream
@@ -115,6 +116,19 @@ jobs:
             TORTOISE_MODULE_SQL_MODULES=TortoiseBots,mod-azeroth-voices
             TORTOISE_MODULE_BUILD_PACKAGES=libboost-dev libboost-filesystem-dev
 
+      - name: Verify published image binary and packaged knowledge
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        shell: bash
+        run: |
+          test -n "$IMAGE_DIGEST"
+          docker pull "$IMAGE@$IMAGE_DIGEST"
+          docker run --rm --network none --read-only --entrypoint /bin/sh \
+            "$IMAGE@$IMAGE_DIGEST" -ec \
+            '/opt/tortoise/bin/mangosd --version; test -s /opt/tortoise/data/humanlike-knowledge.tsv'
+          echo "Image: $IMAGE:voices-$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Digest: $IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "Binary/asset smoke test only; in-game acceptance remains required." >> "$GITHUB_STEP_SUMMARY"
 
 
       - name: Attach QNAP deterministic profiles and knowledge
