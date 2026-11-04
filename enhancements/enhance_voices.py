@@ -12,6 +12,8 @@ scripts_path = root / "AzerothVoicesScripts.cpp"
 provider_path = root / "AzerothVoicesProvider.cpp"
 copyfile("/build/enhancements/AzerothVoicesDeterministic.h",
          root / "AzerothVoicesDeterministic.h")
+copyfile("/build/enhancements/AzerothVoicesIntelligenceV4.h",
+         root / "AzerothVoicesIntelligenceV4.h")
 knowledge_target = Path("/opt/tortoise/data/humanlike-knowledge.tsv")
 knowledge_target.parent.mkdir(parents=True, exist_ok=True)
 copyfile("/build/enhancements/humanlike-knowledge.tsv", knowledge_target)
@@ -274,11 +276,12 @@ command_code=r'''
                             Player* member = ref->getSource();
                             if (!member || member == player || !Script_IsAIControlled(member))
                                 continue;
-                            uint8 cls = member->GetClass();
+                            // Reuse the active TortoiseBots adapter, which
+                            // honours forced roles, actual combat strategies
+                            // and spec detection. Class alone is misleading.
+                            uint8_t roles = sScriptMgr.GetBotRoles(member);
                             bool candidate = addressingTank ?
-                                (cls == CLASS_WARRIOR || cls == CLASS_PALADIN || cls == CLASS_DRUID) :
-                                (cls == CLASS_PRIEST || cls == CLASS_PALADIN ||
-                                 cls == CLASS_DRUID || cls == CLASS_SHAMAN);
+                                (roles & 0x01) != 0 : (roles & 0x02) != 0;
                             if (!candidate)
                                 continue;
                             if (single)
@@ -392,4 +395,4 @@ new='''                parsed.local = hostLower == "localhost" || hostLower == "
                                hostLower == "::1" || hostLower == "tortoise-ollama";'''
 provider=replace_once(provider,old,new,"Explicit internal Docker DNS endpoint")
 provider_path.write_text(provider)
-print("Applied character equipment, bags, quest counts, identity, safe commands, offline QA, social dialogue, and private DNS endpoint.")
+print("Applied live game knowledge, quest planning, role lookup, spell checks, social conversation, offline QA, and previous bot safeguards.")
