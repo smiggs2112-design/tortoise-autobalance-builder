@@ -737,6 +737,20 @@ namespace Deterministic
             (void) diff;
             // Late reply: no LLM and no recursion from bot-originated /say.
             auto now = Clock::now();
+            if (now >= nextStats)
+            {
+                nextStats = now + std::chrono::minutes(10);
+                sLog.outString("[VoicesV4] local_answers=%llu fallback=%llu quests=%llu "
+                    "spell_checks=%llu social=%llu proactive=%llu world_index_queries=%llu hits=%llu",
+                    static_cast<unsigned long long>(deterministicReplies),
+                    static_cast<unsigned long long>(ollamaFallbacks),
+                    static_cast<unsigned long long>(questPlans),
+                    static_cast<unsigned long long>(spellChecks),
+                    static_cast<unsigned long long>(socialExchanges),
+                    static_cast<unsigned long long>(proactiveWarnings),
+                    static_cast<unsigned long long>(IntelligenceV4::Knowledge().lookups),
+                    static_cast<unsigned long long>(IntelligenceV4::Knowledge().hits));
+            }
             // Hot-reload the mounted, read-only TSV without rebuilding or
             // restarting mangosd. This is a bounded 60-second filesystem check.
             if (now >= nextKnowledgePoll)
@@ -831,12 +845,25 @@ namespace Deterministic
                         two->GetQuestStatus(q) == QUEST_STATUS_INCOMPLETE)
                         sharedQuest = q;
                 }
+                std::string topic = "our travels";
                 if (sharedQuest && sObjectMgr.GetQuestTemplate(sharedQuest))
                 {
                     std::string title = sObjectMgr.GetQuestTemplate(sharedQuest)->GetTitle();
                     if (title.size() > 65) title.resize(65);
-                    first = "Still working on " + title + ".";
-                    second = "Same here. Let's get on with it.";
+                    topic = title;
+                    first = (round++ % 2 == 0) ?
+                        "How is " + title + " coming along?" :
+                        "Still working on " + title + ".";
+                    second = (round++ % 3 == 0) ?
+                        "Slowly. Let's finish it properly." :
+                        "I'm still working on it. We'll get there.";
+                }
+                else if (IntelligenceV4::IsHealer(one) &&
+                         two->GetHealthPercent() < 70.0f)
+                {
+                    topic = "getting ready for the next fight";
+                    first = "You're looking a bit worn down. Need a moment?";
+                    second = "A short rest would help.";
                 }
                 else
                 {
@@ -870,6 +897,9 @@ namespace Deterministic
                     pending.erase(pending.begin());
                 pending.push_back(std::move(p));
                 lastSocialByPlayer[id] = now;
+                if (conversations.size() > 128) conversations.clear();
+                conversations[id] = {one->GetObjectGuid().GetRawValue(), now, topic};
+                ++socialExchanges;
                 // Global cap: one exchange per 45 seconds even with many players.
                 break;
             }
