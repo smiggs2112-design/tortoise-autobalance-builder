@@ -59,6 +59,9 @@ class PinnedPatchTests(unittest.TestCase):
             self.assertIn('IntelligenceV4::ReadState(', (target / 'AzerothVoicesDeterministic.h').read_text())
             self.assertIn('botName + " pull my target"', scripts)
             self.assertTrue((target / 'AzerothVoicesIntentV4.h').is_file())
+            memory = manager.split('std::string Manager::BuildMemoryContext', 1)[1].split('bool Manager::ResolveMemoryPair',1)[0]
+            self.assertLess(memory.index('IntelligenceV4::PrivateScope'), memory.index('LoadMemories'))
+            self.assertIn('memoryHuman->GetGroup() == memoryBot->GetGroup()', memory)
             repeated = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(repeated.returncode, 0)
             self.assertIn('expected one anchor', repeated.stderr)

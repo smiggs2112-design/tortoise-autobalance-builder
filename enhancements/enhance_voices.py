@@ -69,6 +69,16 @@ anchor = '    std::string Manager::BuildCurrentSnapshotContext(ChatRequest const
 manager = replace_once(manager, anchor, anchor +
     '        if (request.actor.kind == ActorKind::PlayerBot) return ""; // shared capture above\n',
     "Remove divergent bot snapshots")
+anchor = '    std::string Manager::BuildMemoryContext(ChatRequest const& request)\n    {\n'
+manager = replace_once(manager, anchor, anchor + r'''        // Persistent personal event memories share the live-state privacy gate.
+        bool const privateChannel = request.scope == ChatScope::Party ||
+            request.scope == ChatScope::Raid || request.scope == ChatScope::Whisper;
+        Player* memoryBot = ObjectAccessor::FindPlayer(ObjectGuid(request.actor.guid));
+        Player* memoryHuman = ObjectAccessor::FindPlayer(ObjectGuid(request.speaker.guid));
+        if (!IntelligenceV4::PrivateScope(memoryBot && memoryHuman && memoryHuman->GetGroup() &&
+                memoryHuman->GetGroup() == memoryBot->GetGroup(), privateChannel))
+            return "";
+''', "Persistent memory privacy across the model path")
 
 identity_old = '''        if (!rolePrompt.empty())
             request.systemPrompt += "\\n" + rolePrompt;
