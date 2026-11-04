@@ -88,14 +88,10 @@ namespace Deterministic
     inline bool Near(Player* a, Player* b)
     {
         return a && b && a->IsInWorld() && b->IsInWorld() &&
-            a->IsWithinDistInMap(b, 25.0f);
+            a->GetTeam() == b->GetTeam() && a->IsWithinDistInMap(b, 25.0f);
     }
 
-    enum class Topic
-    {
-        None, Money, Weapon, Gear, Bags, Quests, Progress, Level,
-        Health, Mana, Spells, Resurrection, NextQuest, Knowledge
-    };
+    using Topic = IntelligenceV4::Topic;
 
     struct FollowUp
     {
@@ -325,163 +321,12 @@ namespace Deterministic
             return candidates[round++ % candidates.size()];
         }
 
-        static std::string Coins(uint32_t c)
-        {
-            std::ostringstream out;
-            uint32_t const gold = c / 10000;
-            uint32_t const silver = (c / 100) % 100;
-            uint32_t const copper = c % 100;
-            out << gold << "g " << silver << "s";
-            if (gold == 0 && silver == 0)
-                out << " " << copper << "c";
-            return out.str();
-        }
-
-        static std::string QuestLine(Player* bot, bool progress)
-        {
-            std::ostringstream out;
-            uint32_t seen = 0;
-            for (uint32_t slot = 0; slot < MAX_QUEST_LOG_SIZE && seen < 2; ++slot)
-            {
-                uint32_t id = GetPlayerQuestSlotQuestId(bot, slot);
-                Quest const* quest = id ? sObjectMgr.GetQuestTemplate(id) : nullptr;
-                if (!quest)
-                    continue;
-                QuestStatus const status = bot->GetQuestStatus(id);
-                if (status == QUEST_STATUS_FAILED)
-                    continue;
-                if (seen++)
-                    out << "; ";
-                out << quest->GetTitle();
-                if (status == QUEST_STATUS_COMPLETE)
-                {
-                    out << " (ready to hand in)";
-                    continue;
-                }
-                if (!progress)
-                    continue;
-                QuestStatusData const* state = bot->GetQuestStatusData(id);
-                if (!state)
-                    continue;
-                uint32_t counted = 0;
-                for (uint32_t i = 0; i < QUEST_OBJECTIVES_COUNT && counted < 2; ++i)
-                {
-                    if (quest->ReqCreatureOrGOCount[i])
-                    {
-                        out << " " << state->m_creatureOrGOcount[i] << "/"
-                            << quest->ReqCreatureOrGOCount[i];
-                        ++counted;
-                    }
-                    if (quest->ReqItemCount[i] && counted < 2)
-                    {
-                        out << " items " << state->m_itemcount[i] << "/"
-                            << quest->ReqItemCount[i];
-                        ++counted;
-                    }
-                }
-            }
-            return seen ? out.str() : "";
-        }
-
-        static std::string SpellList(Player* bot, bool resurrectionOnly)
-        {
-            std::set<std::string> seen;
-            for (auto const& learned : bot->GetSpellMap())
-            {
-                if (learned.second.state == PLAYERSPELL_REMOVED || learned.second.disabled)
-                    continue;
-                SpellEntry const* spell = sSpellMgr.GetSpellEntry(learned.first);
-                if (!spell || spell->IsPassiveSpell() || spell->SpellName[0].empty())
-                    continue;
-                std::string const name = spell->SpellName[0];
-                std::string const lower = Normalise(name);
-                if (resurrectionOnly &&
-                    lower != "resurrection" && lower != "redemption" &&
-                    lower != "ancestral spirit" && lower != "rebirth")
-                    continue;
-                if (!resurrectionOnly && (lower == "attack" || lower == "opening"))
-                    continue;
-                seen.insert(name);
-            }
-            if (seen.empty())
-                return "";
-            std::ostringstream out;
-            uint32_t n = 0;
-            for (std::string const& name : seen)
-            {
-                if (n++)
-                    out << ", ";
-                out << name;
-                if (n == 5)
-                    break;
-            }
-            return out.str();
-        }
-
-        Topic Recognise(std::string const& q, std::string const& original,
-                        Topic previous) const
-        {
-            // General mechanics are not a question about this bot's own
-            // health/mana/level. Prefer the offline knowledge catalogue.
-            if ((Any(q, {"what is", "what does", "how does", "explain",
-                         "what level is", "how to"}) &&
-                 !Any(q, {"your", "you", "yours", "my", "mine"})) &&
-                IsQuestion(q, original))
-                return Topic::Knowledge;
-            if (Any(q, {"what next", "where next", "what should we do",
-                        "where should we go", "what quest next", "what do we do now"}))
-                return Topic::NextQuest;
-            if (Any(q, {"resurrect", "ress", "rez", "revive me", "bring me back"}))
-                return Topic::Resurrection;
-            if (Any(q, {"weapon", "main hand", "off hand", "what staff",
-                        "what sword", "what axe", "what dagger", "what shield"}))
-                return Topic::Weapon;
-            if (Any(q, {"equipment", "what gear", "your gear", "you wearing",
-                        "your armour", "your armor"}))
-                return Topic::Gear;
-            if (Any(q, {"inventory", "backpack", "what in your bags",
-                        "what are you carrying", "whats in your bag"}))
-                return Topic::Bags;
-            if (Any(q, {"gold", "money", "coins", "cash", "wealthy", "rich", "broke",
-                        "copper", "silver", "afford", "loaded"}))
-                return Topic::Money;
-            if (Any(q, {"quest progress", "how many", "how far along",
-                        "how much longer", "objectives", "still need"}))
-            {
-                if (Any(q, {"quest", "wolves", "kills", "need", "left", "more"}))
-                    return Topic::Progress;
-            }
-            if (Any(q, {"quests", "questing", "what quest", "doing for quests"}))
-                return Topic::Quests;
-            if (Any(q, {"your level", "what level", "level are you", "level you"}))
-                return Topic::Level;
-            if (Any(q, {"health", "hp", "how hurt", "are you hurt", "are you dying"}))
-                return Topic::Health;
-            if (Any(q, {"mana", "mp", "how much power", "running low on mana"}))
-                return Topic::Mana;
-            if (Any(q, {"spells", "abilities", "what can you cast",
-                        "what buffs", "know any spells"}))
-                return Topic::Spells;
-            if (previous != Topic::None && Any(q, {"is that good", "is that a lot",
-                                                  "really", "not much then", "that all"}))
-                return previous;
-            if (!IsQuestion(q, original))
-                return Topic::None;
-            return Topic::Knowledge;
-        }
-
         bool Answer(Player* speaker, Player* bot, std::string const& message,
                     ChatScope scope, std::string& answer)
         {
             if (!IsPlayableBot(bot) || !speaker)
                 return false;
             std::string const q = Normalise(message);
-            if (IntelligenceV4::SpellReadiness(bot, message, answer))
-            {
-                ++spellChecks;
-                ++deterministicReplies;
-                return true;
-            }
             if (IntelligenceV4::Any(q, {"what are you talking about",
                 "what are you two discussing", "what was that about",
                 "what were you talking about", "what are you discussing"}))
@@ -495,24 +340,6 @@ namespace Deterministic
                     return true;
                 }
             }
-            if (IntelligenceV4::Any(q, {"quest", "objective", "how many",
-                "how far", "what next", "where next", "should we do"}))
-            {
-                if (IntelligenceV4::QuestByName(speaker, q, answer))
-                {
-                    ++deterministicReplies; ++questPlans;
-                    return true;
-                }
-                if (IntelligenceV4::Any(q, {"next", "where should", "what should",
-                     "where do we", "which quest", "do now"}))
-                {
-                    if (IntelligenceV4::QuestPlan(speaker, bot, answer))
-                    {
-                        ++deterministicReplies; ++questPlans;
-                        return true;
-                    }
-                }
-            }
             std::pair<uint64_t, uint64_t> const key(
                 speaker->GetObjectGuid().GetRawValue(), bot->GetObjectGuid().GetRawValue());
             Topic previous = Topic::None;
@@ -520,147 +347,17 @@ namespace Deterministic
             if (found != followUps.end() &&
                 Clock::now() - found->second.last < std::chrono::seconds(90))
                 previous = found->second.topic;
-            Topic topic = Recognise(q, message, previous);
-            if (topic == Topic::None)
-                return false;
-
-            bool const sameParty = speaker->GetGroup() &&
-                speaker->GetGroup() == bot->GetGroup();
-            // Private character finances, bags and quest logs are never
-            // exposed to ungrouped passers-by.
-            if (!sameParty &&
-                (topic == Topic::Money || topic == Topic::Bags ||
-                 topic == Topic::Quests || topic == Topic::Progress ||
-                 topic == Topic::NextQuest || topic == Topic::Spells))
-                return false;
-
-            switch (topic)
-            {
-                case Topic::Money:
-                {
-                    std::string const funds = Coins(bot->GetMoney());
-                    if (Any(q, {"rich", "wealthy", "loaded", "lots of gold"}))
-                        answer = (bot->GetLevel() > 20 ? "Hardly rolling in it. " : "Not bad for my level. ") +
-                            std::string("I've got ") + funds + ".";
-                    else if (bot->GetObjectGuid().GetRawValue() % 3 == 0)
-                        answer = "Only " + funds + " on me.";
-                    else
-                        answer = "I've got " + funds + ".";
-                    break;
-                }
-                case Topic::Weapon:
-                {
-                    Item* main = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
-                    Item* off = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND);
-                    answer = "Main hand: " +
-                        std::string(main && main->GetProto() ? main->GetProto()->Name1 : "nothing");
-                    answer += ". Off hand: " +
-                        std::string(off && off->GetProto() ? off->GetProto()->Name1 : "nothing") + ".";
-                    break;
-                }
-                case Topic::Gear:
-                {
-                    answer = "I'm wearing ";
-                    uint32_t n = 0;
-                    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END && n < 4; ++slot)
-                    {
-                        if (Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-                        {
-                            if (!item->GetProto())
-                                continue;
-                            if (n++)
-                                answer += ", ";
-                            answer += item->GetProto()->Name1;
-                        }
-                    }
-                    answer += n ? ". Ask about a slot for more." : "nothing equipped.";
-                    break;
-                }
-                case Topic::Bags:
-                {
-                    uint32_t count = 0;
-                    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
-                        if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-                            ++count;
-                    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
-                    {
-                        Item* bagItem = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bag);
-                        if (!bagItem)
-                            continue;
-                        Bag* inventory = static_cast<Bag*>(bagItem);
-                        for (uint32_t slot = 0; slot < inventory->GetBagSize(); ++slot)
-                            if (bot->GetItemByPos(bag, static_cast<uint8>(slot)))
-                                ++count;
-                    }
-                    answer = "I've got " + std::to_string(count) +
-                        " occupied slots across my bags. Ask about an item if you need details.";
-                    break;
-                }
-                case Topic::Quests:
-                case Topic::Progress:
-                case Topic::NextQuest:
-                {
-                    if (topic == Topic::NextQuest &&
-                        IntelligenceV4::QuestPlan(speaker, bot, answer))
-                    {
-                        ++questPlans;
-                        break;
-                    }
-                    std::string quests = QuestLine(bot, topic != Topic::Quests);
-                    if (quests.empty())
-                        answer = "I haven't got an active quest to suggest.";
-                    else if (topic == Topic::NextQuest)
-                        answer = "We could work on " + quests + ".";
-                    else
-                        answer = "My quests: " + quests + ".";
-                    break;
-                }
-                case Topic::Level:
-                    answer = "I'm level " + std::to_string(bot->GetLevel()) + ".";
-                    break;
-                case Topic::Health:
-                    answer = "I'm at " +
-                        std::to_string(static_cast<uint32_t>(bot->GetHealthPercent())) + "% health.";
-                    break;
-                case Topic::Mana:
-                {
-                    if (bot->GetMaxPower(POWER_MANA) == 0)
-                        answer = "I don't use mana.";
-                    else
-                        answer = "I'm at " +
-                            std::to_string(static_cast<uint32_t>(bot->GetPowerPercent(POWER_MANA))) +
-                            "% mana.";
-                    break;
-                }
-                case Topic::Resurrection:
-                {
-                    std::string spells = SpellList(bot, true);
-                    if (spells.empty())
-                        answer = "I don't know a resurrection spell.";
-                    else
-                        answer = "I know " + spells +
-                            ", but I haven't checked whether I can cast it right now.";
-                    break;
-                }
-                case Topic::Spells:
-                {
-                    std::string spells = SpellList(bot, false);
-                    answer = spells.empty() ? "I can't find any usable spells in my spellbook."
-                        : "Some spells I know: " + spells + ".";
-                    break;
-                }
-                case Topic::Knowledge:
-                    if (!Lookup(q, answer) &&
-                        !IntelligenceV4::Knowledge().Search(q, answer, speaker))
-                        return false; // unknown/unreliable knowledge -> Ollama
-                    break;
-                default:
-                    return false;
-            }
-            if (answer.empty())
-                return false;
-            if (answer.size() > 240)
-                answer = answer.substr(0, 237) + "...";
+            bool const privateChannel = scope == ChatScope::Party ||
+                scope == ChatScope::Raid || scope == ChatScope::Whisper;
+            auto const state = IntelligenceV4::ReadState(speaker, bot, message, privateChannel, previous);
+            Topic const topic = state.intent;
+            answer = state.answer;
+            if (answer.empty() && topic == Topic::Knowledge)
+                Lookup(q, answer);
+            if (answer.empty()) return false;
+            answer = IntelligenceV4::Limit(answer, 240);
+            if (topic == Topic::NextQuest || topic == Topic::Progress) ++questPlans;
+            if (topic == Topic::SpellReady) ++spellChecks;
             if (followUps.size() > 512)
                 followUps.clear();
             followUps[key] = {topic, Clock::now()};
@@ -708,8 +405,6 @@ namespace Deterministic
                 return false;
             if (scope != ChatScope::Say && scope != ChatScope::Party &&
                 scope != ChatScope::Raid && scope != ChatScope::Whisper)
-                return false;
-            if (!IsQuestion(Normalise(message), message))
                 return false;
             Player* bot = Resolve(player, scope, message, whisperTarget);
             // A player can join the ongoing two-bot discussion in /say
@@ -792,9 +487,11 @@ namespace Deterministic
                 Player* witness = ObjectAccessor::FindPlayer(ObjectGuid(it->witness));
                 if (IsPlayableBot(first) && IsPlayableBot(second) && witness &&
                     witness->IsInWorld() && !witness->IsInCombat() &&
+                    witness->FindMap() && !witness->FindMap()->IsDungeon() &&
+                    !witness->FindMap()->IsBattleGround() &&
                     first->GetMapId() == it->map &&
                     !first->IsInCombat() && !second->IsInCombat() &&
-                    Near(first, second) && Near(second, witness))
+                    Near(first, witness) && Near(first, second) && Near(second, witness))
                     second->Say(it->reply, LANG_UNIVERSAL);
                 it = pending.erase(it);
             }

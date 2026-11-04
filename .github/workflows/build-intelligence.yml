@@ -33,6 +33,18 @@ jobs:
           python3 -m py_compile enhancements/enhance_voices.py
           python3 -m unittest discover -s tests -p 'test_*.py'
 
+      - name: Check out pinned Voices for patch regression tests
+        uses: actions/checkout@v4
+        with:
+          repository: Ildourol/mod-twow-azeroth-voices
+          ref: b76ba4c10d44b41cac284699769ea789f735a567
+          path: voices-source
+
+      - name: Verify patch against actual pinned source
+        env:
+          VOICES_SOURCE_TEST_ROOT: ${{ github.workspace }}/voices-source
+        run: python3 -m unittest discover -s tests -p 'test_service.py'
+
       - name: Check out upstream Docker build files
         uses: actions/checkout@v4
         with:
@@ -65,7 +77,7 @@ jobs:
           p.write_text(content)
           PY
           mkdir -p upstream/enhancements
-          cp enhancements/enhance_voices.py enhancements/AzerothVoicesDeterministic.h enhancements/AzerothVoicesIntelligenceV4.h enhancements/humanlike-knowledge.tsv upstream/enhancements/
+          cp enhancements/enhance_voices.py enhancements/AzerothVoicesDeterministic.h enhancements/AzerothVoicesIntelligenceV4.h enhancements/AzerothVoicesIntentV4.h enhancements/humanlike-knowledge.tsv upstream/enhancements/
           # Upstream .dockerignore permits only docker/** by default.
           printf '\n!enhancements/\n!enhancements/**\n' >> upstream/.dockerignore
 

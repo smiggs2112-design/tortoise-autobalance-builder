@@ -3,20 +3,27 @@
 
 No edits to TortoiseBots or AutoBalance. Run after all modules are cloned.
 """
+import argparse
 from pathlib import Path
 from shutil import copyfile
 
-root = Path("/build/core/modules/mod-azeroth-voices/src")
+parser = argparse.ArgumentParser()
+parser.add_argument("--source", type=Path, default=Path("/build/core/modules/mod-azeroth-voices/src"))
+parser.add_argument("--assets", type=Path, default=Path("/build/enhancements"))
+parser.add_argument("--knowledge-target", type=Path, default=Path("/opt/tortoise/data/humanlike-knowledge.tsv"))
+args = parser.parse_args()
+root = args.source
 manager_path = root / "AzerothVoicesManager.cpp"
 scripts_path = root / "AzerothVoicesScripts.cpp"
 provider_path = root / "AzerothVoicesProvider.cpp"
-copyfile("/build/enhancements/AzerothVoicesDeterministic.h",
+copyfile(args.assets / "AzerothVoicesDeterministic.h",
          root / "AzerothVoicesDeterministic.h")
-copyfile("/build/enhancements/AzerothVoicesIntelligenceV4.h",
+copyfile(args.assets / "AzerothVoicesIntelligenceV4.h",
          root / "AzerothVoicesIntelligenceV4.h")
-knowledge_target = Path("/opt/tortoise/data/humanlike-knowledge.tsv")
+copyfile(args.assets / "AzerothVoicesIntentV4.h", root / "AzerothVoicesIntentV4.h")
+knowledge_target = args.knowledge_target
 knowledge_target.parent.mkdir(parents=True, exist_ok=True)
-copyfile("/build/enhancements/humanlike-knowledge.tsv", knowledge_target)
+copyfile(args.assets / "humanlike-knowledge.tsv", knowledge_target)
 
 
 def replace_once(value, before, after, label):
@@ -39,113 +46,26 @@ manager = replace_once(manager, '#include "AzerothVoicesManager.h"',
                        '#include "AzerothVoicesManager.h"\n#include "Bag.h"',
                        "Include Bag for full inventory inspection")
 
-# These are deliberately on-demand: ordinary conversation does not need a large
-# equipment, backpack and quest payload on a CPU-only Qwen model.
-equipment = r'''        if (bot && m_config->environmentMaximumItems &&
-            (m_config->environmentIncludeEquipment || m_config->environmentIncludeBackpack))
+# Shared state replaces duplicated bot item/quest/spell readers. Non-bot NPC
+# context remains upstream-owned. This executes on the world thread, before queueing.
+manager = replace_once(manager, '#include "Bag.h"',
+    '#include "Bag.h"\n#include "AzerothVoicesIntelligenceV4.h"', "Shared state dependency")
+anchor = '    std::string Manager::BuildEnvironmentContext(ChatRequest const& request) const\n    {\n'
+manager = replace_once(manager, anchor, anchor + r'''        if (request.actor.kind == ActorKind::PlayerBot)
         {
-            std::string const question = Lower(request.incomingMessage);
-            auto mentions = [&](char const* word) {
-                return question.find(word) != std::string::npos;
-            };
-            bool const gearQuestion = mentions("weapon") || mentions("wep") ||
-                mentions("equip") || mentions("gear") || mentions("wear") ||
-                mentions("sword") || mentions("staff") || mentions("armour") ||
-                mentions("armor") || mentions("shield");
-            bool const bagQuestion = mentions("bag") || mentions("inventor") ||
-                mentions("backpack") || mentions("carrying") || mentions("have on you");
-            uint32_t totalItems = 0;
-            auto writeItem = [&](std::string const& label, Item* item) {
-                if (!item || !item->GetProto() || totalItems >= m_config->environmentMaximumItems)
-                    return;
-                context << "\n- " << label << ": " << item->GetProto()->Name1;
-                if (item->GetCount() > 1)
-                    context << " x" << item->GetCount();
-                ++totalItems;
-            };
-            if (gearQuestion && m_config->environmentIncludeEquipment)
-            {
-                context << "\nActual equipped items belonging to " << bot->GetName()
-                        << " (these are the BOT's items, not the speaker's):";
-                Item* main = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
-                Item* off = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND);
-                context << "\n- Main hand: " << (main && main->GetProto() ? main->GetProto()->Name1 : "empty");
-                context << "\n- Off hand: " << (off && off->GetProto() ? off->GetProto()->Name1 : "empty");
-                static char const* const slots[] = {
-                    "Head", "Neck", "Shoulders", "Shirt", "Chest", "Waist",
-                    "Legs", "Feet", "Wrists", "Hands", "Ring 1", "Ring 2",
-                    "Trinket 1", "Trinket 2", "Back", "Main hand",
-                    "Off hand", "Ranged", "Tabard"
-                };
-                for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END &&
-                     totalItems < m_config->environmentMaximumItems; ++slot)
-                {
-                    if (slot == EQUIPMENT_SLOT_MAINHAND || slot == EQUIPMENT_SLOT_OFFHAND)
-                        continue;
-                    writeItem(slots[slot], bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
-                }
-            }
-            if (bagQuestion && m_config->environmentIncludeBackpack)
-            {
-                context << "\nItems in " << bot->GetName() << "'s bags:";
-                for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END &&
-                     totalItems < m_config->environmentMaximumItems; ++slot)
-                    writeItem("Backpack", bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
-                for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END &&
-                     totalItems < m_config->environmentMaximumItems; ++bagSlot)
-                {
-                    Item* bagItem = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot);
-                    if (!bagItem)
-                        continue;
-                    Bag* bag = static_cast<Bag*>(bagItem);
-                    for (uint32 slot = 0; slot < bag->GetBagSize() &&
-                         totalItems < m_config->environmentMaximumItems; ++slot)
-                        writeItem("Bag " + std::to_string(bagSlot - INVENTORY_SLOT_BAG_START + 1),
-                                  bot->GetItemByPos(bagSlot, static_cast<uint8>(slot)));
-                }
-                if (totalItems == 0)
-                    context << "\n- Empty";
-            }
+            if (!m_config->environmentContextEnabled) return "";
+            Player* bot = ObjectAccessor::FindPlayer(ObjectGuid(request.actor.guid));
+            Player* human = ObjectAccessor::FindPlayer(ObjectGuid(request.speaker.guid));
+            bool const privateChannel = request.scope == ChatScope::Party ||
+                request.scope == ChatScope::Raid || request.scope == ChatScope::Whisper;
+            return IntelligenceV4::RequestContext(IntelligenceV4::ReadState(
+                human, bot, request.incomingMessage, privateChannel));
         }
-        return context.str();
-    }
-
-'''
-manager = replace_between(
-    manager,
-    '        if (bot && m_config->environmentMaximumItems &&\n',
-    '    std::string Manager::BuildCurrentSnapshotContext',
-    equipment,
-    "Bounded live equipment and bags",
-)
-
-quest_old = '''                appendSectionLine(quests, "Active quests", quest->GetTitle() + " (" + statusName + ")");
-                ++count;'''
-quest_new = '''                std::ostringstream questLine;
-                questLine << quest->GetTitle() << " (" << statusName << ")";
-                QuestStatusData const* progress = bot->GetQuestStatusData(questId);
-                if (progress)
-                {
-                    for (uint32_t objective = 0; objective < QUEST_OBJECTIVES_COUNT; ++objective)
-                    {
-                        uint32_t neededCreatures = quest->ReqCreatureOrGOCount[objective];
-                        uint32_t neededItems = quest->ReqItemCount[objective];
-                        if (!neededCreatures && !neededItems)
-                            continue;
-                        std::string const objectiveName = quest->ObjectiveText[objective].empty()
-                            ? ("objective " + std::to_string(objective + 1))
-                            : quest->ObjectiveText[objective];
-                        if (neededCreatures)
-                            questLine << "; " << objectiveName << " "
-                                      << progress->m_creatureOrGOcount[objective] << "/" << neededCreatures;
-                        if (neededItems)
-                            questLine << "; item " << quest->ReqItemId[objective] << " "
-                                      << progress->m_itemcount[objective] << "/" << neededItems;
-                    }
-                }
-                appendSectionLine(quests, "Active quests and real objective progress", questLine.str());
-                ++count;'''
-manager=replace_once(manager,quest_old,quest_new,"Quest objective counters")
+''', "Shared Ollama state")
+anchor = '    std::string Manager::BuildCurrentSnapshotContext(ChatRequest const& request) const\n    {\n'
+manager = replace_once(manager, anchor, anchor +
+    '        if (request.actor.kind == ActorKind::PlayerBot) return ""; // shared capture above\n',
+    "Remove divergent bot snapshots")
 
 identity_old = '''        if (!rolePrompt.empty())
             request.systemPrompt += "\\n" + rolePrompt;
@@ -200,7 +120,7 @@ command_code=r'''
                 scope != ChatScope::Raid && scope != ChatScope::Whisper)
                 return false;
 
-            std::string utterance = Lower(input);
+            std::string utterance = IntelligenceV4::Normalise(input);
             // Strip polite punctuation without changing the intent.
             for (char& c : utterance)
                 if (c == '?' || c == '!' || c == ',' || c == '.' || c == ':')
@@ -341,7 +261,7 @@ command_code=r'''
                 command = ".bot action attack";
             else if ((everyone || addressingTank) &&
                      (utterance == "pull my target" || utterance == "pull that target"))
-                command = ".bot action pull";
+                command = everyone ? ".bot action pull" : ".bot command " + botName + " pull my target";
             else if (everyone && (utterance == "interrupt that" ||
                                   utterance == "interrupt my target"))
                 command = ".bot action interrupt";
@@ -395,4 +315,4 @@ new='''                parsed.local = hostLower == "localhost" || hostLower == "
                                hostLower == "::1" || hostLower == "tortoise-ollama";'''
 provider=replace_once(provider,old,new,"Explicit internal Docker DNS endpoint")
 provider_path.write_text(provider)
-print("Applied live game knowledge, quest planning, role lookup, spell checks, social conversation, offline QA, and previous bot safeguards.")
+print("Applied shared bounded game-state/intent service, local answers and Ollama context; gameplay engines unchanged.")
