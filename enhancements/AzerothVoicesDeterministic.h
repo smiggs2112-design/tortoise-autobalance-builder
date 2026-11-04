@@ -11,6 +11,8 @@
 #include "QuestDef.h"
 #include "SpellMgr.h"
 #include "Map.h"
+#include "Log.h"
+#include "AzerothVoicesIntelligenceV4.h"
 
 #include <algorithm>
 #include <chrono>
@@ -108,6 +110,17 @@ namespace Deterministic
         std::map<uint64_t, Moment> lastSocialByPlayer;
         std::map<std::string, Moment> lastSocialByMap;
         Moment nextScan = Moment();
+        Moment nextStats = Moment();
+        uint64_t deterministicReplies = 0, ollamaFallbacks = 0, socialExchanges = 0;
+        uint64_t questPlans = 0, spellChecks = 0, proactiveWarnings = 0;
+        std::map<uint64_t, Moment> nextCareForPlayer;
+        struct Scene
+        {
+            uint64_t botGuid = 0;
+            Moment last = Moment();
+            std::string subject;
+        };
+        std::map<uint64_t, Scene> conversations;
         uint32_t round = 0;
         struct Pending
         {
@@ -463,6 +476,43 @@ namespace Deterministic
             if (!IsPlayableBot(bot) || !speaker)
                 return false;
             std::string const q = Normalise(message);
+            if (IntelligenceV4::SpellReadiness(bot, message, answer))
+            {
+                ++spellChecks;
+                ++deterministicReplies;
+                return true;
+            }
+            if (IntelligenceV4::Any(q, {"what are you talking about",
+                "what are you two discussing", "what was that about",
+                "what were you talking about", "what are you discussing"}))
+            {
+                auto scene = conversations.find(speaker->GetObjectGuid().GetRawValue());
+                if (scene != conversations.end() &&
+                    Clock::now() - scene->second.last < std::chrono::seconds(210))
+                {
+                    answer = "We were talking about " + scene->second.subject + ".";
+                    ++deterministicReplies;
+                    return true;
+                }
+            }
+            if (IntelligenceV4::Any(q, {"quest", "objective", "how many",
+                "how far", "what next", "where next", "should we do"}))
+            {
+                if (IntelligenceV4::QuestByName(speaker, q, answer))
+                {
+                    ++deterministicReplies; ++questPlans;
+                    return true;
+                }
+                if (IntelligenceV4::Any(q, {"next", "where should", "what should",
+                     "where do we", "which quest", "do now"}))
+                {
+                    if (IntelligenceV4::QuestPlan(speaker, bot, answer))
+                    {
+                        ++deterministicReplies; ++questPlans;
+                        return true;
+                    }
+                }
+            }
             std::pair<uint64_t, uint64_t> const key(
                 speaker->GetObjectGuid().GetRawValue(), bot->GetObjectGuid().GetRawValue());
             Topic previous = Topic::None;
@@ -550,6 +600,12 @@ namespace Deterministic
                 case Topic::Progress:
                 case Topic::NextQuest:
                 {
+                    if (topic == Topic::NextQuest &&
+                        IntelligenceV4::QuestPlan(speaker, bot, answer))
+                    {
+                        ++questPlans;
+                        break;
+                    }
                     std::string quests = QuestLine(bot, topic != Topic::Quests);
                     if (quests.empty())
                         answer = "I haven't got an active quest to suggest.";
@@ -594,8 +650,9 @@ namespace Deterministic
                     break;
                 }
                 case Topic::Knowledge:
-                    if (!Lookup(q, answer))
-                        return false; // leave it to the LLM
+                    if (!Lookup(q, answer) &&
+                        !IntelligenceV4::Knowledge().Search(q, answer))
+                        return false; // unknown/unreliable knowledge -> Ollama
                     break;
                 default:
                     return false;
@@ -607,6 +664,7 @@ namespace Deterministic
             if (followUps.size() > 512)
                 followUps.clear();
             followUps[key] = {topic, Clock::now()};
+            ++deterministicReplies;
             return true;
         }
 
@@ -658,7 +716,10 @@ namespace Deterministic
                 return false;
             std::string answer;
             if (!Answer(player, bot, message, scope, answer))
+            {
+                ++ollamaFallbacks;
                 return false;
+            }
             if (lastReplies.size() > 256)
                 lastReplies.clear();
             auto i = lastReplies.find(bot->GetObjectGuid().GetRawValue());
