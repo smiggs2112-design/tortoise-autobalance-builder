@@ -423,12 +423,7 @@ namespace Deterministic
                 std::string topic="how to spend the next stretch of our travels";
                 std::string shared;
                 if(IntelligenceV4::HasSharedQuest(one,two,shared))topic="finishing "+IntelligenceV4::Limit(shared,55);
-                else if(player->GetGroup() && player->GetGroup()==one->GetGroup() &&
-                        player->GetGroup()==two->GetGroup())
-                {
-                    auto advice=IntelligenceV4::PlanQuests(player,one);
-                    if(!advice.steps.empty())topic="our plans for "+IntelligenceV4::Limit(advice.steps.front().title,50);
-                }
+                // Public ambient dialogue never reads the human's private log.
                 auto seedA=IntelligenceV4::CompanionSeed(one,player);
                 auto seedB=IntelligenceV4::CompanionSeed(two,player);
                 auto lines=IntelligenceV4::Social().Exchange(one->GetObjectGuid().GetRawValue(),

@@ -338,7 +338,8 @@ inline QuestAdvice PlanQuests(Player* human,Player* companion,bool availableOnly
     std::vector<Player*> party;uint32_t visited=0;
     for(GroupReference* ref=human->GetGroup()->GetFirstMember();ref && visited++<40;ref=ref->next())
     {auto* member=ref->getSource();if(member && member!=human && member->IsInWorld() && human->IsWithinDistInMap(member,100.0f) && party.size()<10)party.push_back(member);}
-    if(std::find(party.begin(),party.end(),companion)==party.end())party.push_back(companion);
+    if(party.size()<10 && human->IsWithinDistInMap(companion,100.0f) &&
+        std::find(party.begin(),party.end(),companion)==party.end())party.push_back(companion);
     std::vector<std::set<std::pair<char,int32_t>>> partyTargets;
     for(auto* member:party)
     {

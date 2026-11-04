@@ -98,6 +98,7 @@ int main()
     auto serial=ledger.SceneFor(1,2,3,"our next quest",now);
     assert(ledger.CanContinue(1,serial,now));ledger.Join(1,2,now);assert(!ledger.CanContinue(1,serial,now));
     auto lines=ledger.Exchange(2,3,"a quest",seed,SocialSeed{},now);
+    for(auto const& line:lines)assert(line.find("Wolf trouble")==std::string::npos);
     auto next=ledger.Exchange(2,3,"a quest",seed,SocialSeed{},now+std::chrono::seconds(300));
     assert(lines.size()==3 && lines!=next);
     ledger.Prune(now+std::chrono::hours(7));assert(ledger.pairs.empty() && ledger.scenes.empty() && ledger.friendships.empty());
