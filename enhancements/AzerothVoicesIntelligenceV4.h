@@ -4,6 +4,7 @@
 // All data comes from the *running* Turtle WoW core and its loaded databases.
 // No Internet, external database or LLM is required. Does not move/cast/gear bots.
 #include "AzerothVoicesIntentV4.h"
+#include "AzerothVoicesNativeV4.h"
 #include "AzerothVoicesBotSeam.h"
 #include "Bag.h"
 #include "Item.h"
@@ -19,6 +20,7 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <utility>
+#include <tuple>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -110,119 +112,8 @@ inline std::string SpawnHint(Player* player, uint32_t creatureEntry)
 // The plan is based on the *human's* quest log, never just the bot's.
 // First priority: turn in a completed quest. Then shared quests with
 // unresolved objectives, especially overlapping enemy and item targets.
-inline bool QuestPlan(Player* human, Player* companion, std::string& answer,
-                      std::string const& specificName = "")
-{
-    if (!human || !companion || !human->GetGroup() ||
-        human->GetGroup() != companion->GetGroup())
-        return false;
-
-    struct Candidate { Quest const* quest=nullptr; int score=-10000; bool shared=false; };
-    Candidate best;
-    uint8_t const level = human->GetLevel();
-    for (uint8_t slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
-    {
-        uint32_t id = GetPlayerQuestSlotQuestId(human, slot);
-        Quest const* quest = id ? sObjectMgr.GetQuestTemplate(id) : nullptr;
-        if (!quest) continue;
-        if (!specificName.empty() && !Contains(Normalise(quest->GetTitle()), specificName) &&
-            !Contains(specificName, Normalise(quest->GetTitle())))
-            continue;
-        QuestStatus const status = human->GetQuestStatus(id);
-        if (status != QUEST_STATUS_INCOMPLETE && status != QUEST_STATUS_COMPLETE)
-            continue;
-
-        int score = status == QUEST_STATUS_COMPLETE ? 1000 : 0;
-        bool const shared = HasInLog(companion, id) &&
-            companion->GetQuestStatus(id) == QUEST_STATUS_INCOMPLETE;
-        if (shared && companion->GetQuestStatus(id) != QUEST_STATUS_FAILED) score += 65;
-        int32 const ql = static_cast<int32>(quest->GetQuestLevel());
-        if (ql > 0)
-        {
-            int const delta = std::abs(static_cast<int>(level) - ql);
-            score += std::max(0, 35 - delta * 5);
-            if (ql > static_cast<int>(level) + 5) score -= 45;
-        }
-        // ZoneOrSort > 0 is a zone ID; negative values are quest category.
-        if (quest->GetZoneOrSort() > 0 &&
-            static_cast<uint32_t>(quest->GetZoneOrSort()) == human->GetZoneId())
-            score += 40;
-
-        QuestStatusData const* data = human->GetQuestStatusData(id);
-        if (data && status == QUEST_STATUS_INCOMPLETE)
-        {
-            uint32_t incomplete = 0;
-            uint32_t incompleteShared = 0;
-            for (uint32_t o = 0; o < QUEST_OBJECTIVES_COUNT; ++o)
-            {
-                if (quest->ReqCreatureOrGOCount[o] &&
-                    data->m_creatureOrGOcount[o] < quest->ReqCreatureOrGOCount[o])
-                {
-                    ++incomplete;
-                    if (shared) ++incompleteShared;
-                }
-            }
-            for (uint32_t o = 0; o < QUEST_ITEM_OBJECTIVES_COUNT; ++o)
-                if (quest->ReqItemCount[o] && data->m_itemcount[o] < quest->ReqItemCount[o])
-                    ++incomplete;
-            score += std::min(15, static_cast<int>(incomplete) * 3);
-            score += std::min(10, static_cast<int>(incompleteShared) * 2);
-        }
-        if (score > best.score) best = {quest, score, shared};
-    }
-
-    if (!best.quest)
-    {
-        answer = specificName.empty() ?
-            "I can't find a suitable active quest in your log. We could check nearby quest givers." :
-            "I can't find that quest in your active log.";
-        return true;
-    }
-    Quest const* q = best.quest;
-    uint32_t id = q->GetQuestId();
-    if (human->GetQuestStatus(id) == QUEST_STATUS_COMPLETE)
-    {
-        answer = "You've finished " + q->GetTitle() +
-            ". I'd hand it in before taking another task.";
-        return true;
-    }
-
-    std::ostringstream out;
-    out << (best.shared ? "We're both working on " : "You have ") << q->GetTitle() << ". ";
-    QuestStatusData const* progress = human->GetQuestStatusData(id);
-    bool foundObjective = false;
-    if (progress)
-    {
-        for (uint32_t i = 0; i < QUEST_OBJECTIVES_COUNT; ++i)
-        {
-            uint32_t goal = q->ReqCreatureOrGOCount[i];
-            if (!goal || progress->m_creatureOrGOcount[i] >= goal) continue;
-            uint32_t remain = goal - progress->m_creatureOrGOcount[i];
-            out << "You still need " << remain << " " << CreatureLabel(q->ReqCreatureOrGOId[i]) << ". ";
-            if (q->ReqCreatureOrGOId[i] > 0)
-                out << SpawnHint(human, static_cast<uint32_t>(q->ReqCreatureOrGOId[i]));
-            foundObjective = true;
-            break;
-        }
-        if (!foundObjective)
-            for (uint32_t i = 0; i < QUEST_ITEM_OBJECTIVES_COUNT; ++i)
-            {
-                uint32_t goal = q->ReqItemCount[i];
-                if (!goal || progress->m_itemcount[i] >= goal) continue;
-                out << "You need " << goal - progress->m_itemcount[i] << " more "
-                    << ItemLabel(q->ReqItemId[i]) << ". ";
-                foundObjective = true;
-                break;
-            }
-    }
-    if (!foundObjective)
-        out << "No unfinished kill/item counters are available; check other quest requirements. ";
-    if (q->GetZoneOrSort() > 0 &&
-        static_cast<uint32_t>(q->GetZoneOrSort()) != human->GetZoneId())
-        out << "It's listed for another zone; I can't verify the route from here.";
-    answer = Limit(out.str(), 240);
-    return true;
-}
+inline bool QuestPlan(Player* human,Player* companion,std::string& answer,
+                      std::string const& specificName = "");
 
 inline bool QuestByName(Player* human, std::string const& q, std::string& answer)
 {
@@ -265,163 +156,6 @@ inline bool QuestByName(Player* human, std::string const& q, std::string& answer
         return true;
     }
     return false;
-}
-
-struct Entry
-{
-    uint32_t id = 0;
-    std::string name;
-    std::string key;
-};
-struct Index
-{
-    bool built = false;
-    std::vector<Entry> quests, creatures, items;
-    uint64_t lookups = 0, hits = 0, misses = 0;
-
-    void Build()
-    {
-        if (built) return;
-        built = true;
-        // One lazy pass, only upon a relevant player knowledge question.
-        // There is no world-tick or bot-population-wide indexing.
-        size_t const maximumEntries = 50000;
-        // Oversized categories are disabled rather than partially indexed:
-        // partial indexing could hide duplicate names and invent certainty.
-        if (sObjectMgr.GetQuestTemplates().size() <= maximumEntries)
-        for (auto const& entry : sObjectMgr.GetQuestTemplates())
-            if (entry.second && !entry.second->GetTitle().empty() && entry.second->GetTitle().size() <= 160)
-                quests.push_back({entry.first, entry.second->GetTitle(),
-                                 Normalise(entry.second->GetTitle())});
-        if (sObjectMgr.GetCreatureInfoMap().size() <= maximumEntries)
-        for (auto const& entry : sObjectMgr.GetCreatureInfoMap())
-            if (entry.second && !entry.second->name.empty() && entry.second->name.size() <= 160)
-                creatures.push_back({entry.first, entry.second->name,
-                                    Normalise(entry.second->name)});
-        if (sObjectMgr.GetItemPrototypeMap().size() <= maximumEntries)
-        for (auto const& entry : sObjectMgr.GetItemPrototypeMap())
-            if (!entry.second.Name1.empty() && entry.second.Name1.size() <= 160)
-                items.push_back({entry.first, entry.second.Name1,
-                                 Normalise(entry.second.Name1)});
-    }
-
-    static Entry const* Match(std::vector<Entry> const& entries, std::string const& question)
-    {
-        Entry const* found = nullptr;
-        size_t length = 0;
-        bool ambiguous = false;
-        for (auto const& entry : entries)
-        {
-            // Single-word common names (e.g. "water") are ambiguous and
-            // deliberately not used as automatic knowledge matches.
-            if (entry.key.size() < 6 || entry.key.find(' ') == std::string::npos)
-                continue;
-            if (!Contains(question, entry.key)) continue;
-            if (entry.key.size() > length)
-            {
-                found = &entry;
-                length = entry.key.size();
-                ambiguous = false;
-            }
-            else if (entry.key.size() == length && found && found->id != entry.id)
-                ambiguous = true;
-        }
-        return ambiguous ? nullptr : found;
-    }
-
-    bool Search(std::string const& input, std::string& answer,
-                Player* speaker = nullptr)
-    {
-        if (input.size() > 220) return false;
-        std::string question = Normalise(input);
-        ++lookups;
-        if (!Any(question, {"quest", "item", "who is", "who are", "what is",
-                            "what does", "tell me about", "creature", "mob",
-                            "what level", "where is", "where are", "drop"}))
-        { ++misses; return false; }
-        // These tables do not prove drop sources or travel routes.
-        if (Any(question, {"drop", "drops", "dropped", "route", "path"}))
-        { ++misses; return false; }
-        Build();
-
-        bool questRequest = Any(question, {"quest", "mission", "objective", "complete"});
-        bool itemRequest = Any(question, {"item", "weapon", "gear", "equipment", "drop"});
-        bool creatureRequest = Any(question, {"creature", "mob", "enemy", "who is",
-                                            "where is", "where are", "what level"});
-        Entry const* match = nullptr;
-
-        // Explicit type requests take priority; generic "tell me about"
-        // resolves exact long-name matches, not arbitrary short tokens.
-        if (questRequest && (match = Match(quests, question)))
-        {
-            Quest const* quest = sObjectMgr.GetQuestTemplate(match->id);
-            if (!quest) return false;
-            std::ostringstream out;
-            out << quest->GetTitle() << " is a level " << quest->GetQuestLevel()
-                << " quest (minimum level " << quest->GetMinLevel() << "). ";
-            uint32_t objectives = 0;
-            for (uint32_t i=0;i<QUEST_OBJECTIVES_COUNT && objectives<2;++i)
-                if (quest->ReqCreatureOrGOCount[i])
-                {
-                    out << "Requires " << quest->ReqCreatureOrGOCount[i] << " "
-                        << CreatureLabel(quest->ReqCreatureOrGOId[i]) << ". ";
-                    ++objectives;
-                }
-            for (uint32_t i=0;i<QUEST_ITEM_OBJECTIVES_COUNT && objectives<2;++i)
-                if (quest->ReqItemCount[i])
-                {
-                    out << "Collect " << quest->ReqItemCount[i] << " "
-                        << ItemLabel(quest->ReqItemId[i]) << ". ";
-                    ++objectives;
-                }
-            answer = Limit(out.str()); ++hits; return true;
-        }
-
-        if (itemRequest && (match = Match(items, question)))
-        {
-            ItemPrototype const* item = sObjectMgr.GetItemPrototype(match->id);
-            if (!item) return false;
-            std::ostringstream out;
-            out << item->Name1 << " is an item (item level " << item->ItemLevel
-                << ", required level " << item->RequiredLevel << ").";
-            answer = Limit(out.str()); ++hits; return true;
-        }
-        if (creatureRequest && (match = Match(creatures, question)))
-        {
-            CreatureInfo const* creature = sObjectMgr.GetCreatureTemplate(match->id);
-            if (!creature) return false;
-            std::ostringstream out;
-            out << creature->name << " is level " << creature->level_min;
-            if (creature->level_max != creature->level_min)
-                out << "-" << creature->level_max;
-            out << ".";
-            if (Any(question, {"where", "location", "find", "spawn"}))
-            {
-                std::string hint = SpawnHint(speaker, match->id);
-                if (hint.empty())
-                    out << " I can't verify a spawn on your current map.";
-                else
-                    out << hint;
-            }
-            answer = Limit(out.str()); ++hits; return true;
-        }
-
-        if (!questRequest && (match = Match(quests, question)))
-        {
-            Quest const* quest = sObjectMgr.GetQuestTemplate(match->id);
-            if (!quest) return false;
-            answer = Limit(quest->GetTitle() + " is a level " +
-                           std::to_string(quest->GetQuestLevel()) + " quest.");
-            ++hits; return true;
-        }
-        ++misses; return false;
-    }
-};
-
-inline Index& Knowledge()
-{
-    static Index index;
-    return index;
 }
 
 // Checks spellbook and current *self* readiness. No cast or target claim.
@@ -771,12 +505,16 @@ inline Catalogue& Mechanics()
     return catalogue;
 }
 
+#include "AzerothVoicesKnowledgeV4.h"
+
 // An owned, bounded value. No Player/Quest/Item pointers cross into a worker.
 struct GameState
 {
     Topic intent = Topic::None;
     bool valid = false, privateAllowed = false;
-    std::string actor, role, answer, party, questAdvice;
+    std::string actor, role, answer, party, questAdvice, evidence, social;
+    uint32_t questId = 0;
+    bool questAboutHuman = true;
     uint32_t level = 0, health = 0, mana = 0;
     bool usesMana = false;
 };
@@ -930,6 +668,8 @@ inline bool FormatFact(Player* speaker, Player* bot, std::string const& message,
 struct IntentMemory
 {
     Topic topic = Topic::None;
+    uint32_t questId = 0;
+    bool questAboutHuman = true;
     std::chrono::steady_clock::time_point seen{};
 };
 inline std::map<std::pair<uint64_t, uint64_t>, IntentMemory>& RecentIntents()
@@ -938,12 +678,42 @@ inline std::map<std::pair<uint64_t, uint64_t>, IntentMemory>& RecentIntents()
     return memory;
 }
 
+inline SocialSeed CompanionSeed(Player* bot,Player* human)
+{
+    auto now=SocialClock::now();
+    auto& pair=Social().Get(bot->GetObjectGuid().GetRawValue(),human->GetObjectGuid().GetRawValue(),now);
+    if(Native().profile)
+        Social().Seed(bot->GetObjectGuid().GetRawValue(),human->GetObjectGuid().GetRawValue(),Native().profile(bot,human),now);
+    return pair.seed;
+}
+inline void RecordInteraction(Player* human,Player* bot,std::string const& message,Topic topic,bool persist=true)
+{
+    if(!human || !bot || Script_IsAIControlled(human) || !Script_IsAIControlled(bot))return;
+    std::string label;
+    switch(topic)
+    {
+        case Topic::Quests:case Topic::Progress:label="quest progress";break;
+        case Topic::NextQuest:case Topic::QuestOverlap:case Topic::AvailableQuests:label="our next questing plans";break;
+        case Topic::Bags:case Topic::Gear:case Topic::Weapon:label="equipment and supplies";break;
+        case Topic::SpellReady:case Topic::Spells:label="spells and preparation";break;
+        case Topic::Knowledge:label="game lore";break;
+        case Topic::Social:label="travelling together";break;
+        default:label="how we are doing";break;
+    }
+    auto previous=RecentIntents().find({human->GetObjectGuid().GetRawValue(),bot->GetObjectGuid().GetRawValue()});
+    if(previous!=RecentIntents().end() && previous->second.questId)
+        if(auto* quest=sObjectMgr.GetQuestTemplate(previous->second.questId))label=quest->GetTitle();
+    int delta=Social().Observe(bot->GetObjectGuid().GetRawValue(),human->GetObjectGuid().GetRawValue(),
+        message,label,SocialClock::now());
+    if(Native().delivered) Native().delivered(bot,human,persist?delta:0);
+}
+
 inline GameState ReadState(Player* speaker, Player* bot, std::string const& message,
                            bool privateChannel, Topic previous = Topic::None)
 {
     GameState state;
     if (!speaker || !bot || !speaker->IsInWorld() || !bot->IsInWorld() ||
-        Script_IsAIControlled(speaker) || !Script_IsAIControlled(bot) || message.size() > 220)
+        Script_IsAIControlled(speaker) || !Script_IsAIControlled(bot) || message.size() > 220 || !Limits().enabled)
         return state;
     state.valid = true;
     state.actor = Limit(bot->GetName(), 48);
@@ -961,12 +731,82 @@ inline GameState ReadState(Player* speaker, Player* bot, std::string const& mess
     if (previous == Topic::None && found != memory.end() &&
         now - found->second.seen < std::chrono::seconds(90)) previous = found->second.topic;
     state.intent = Recognise(Normalise(message), message, previous);
-    FormatFact(speaker, bot, message, state.intent, state.privateAllowed, state.answer);
+    auto q=Normalise(message);
+    auto actor=bot->GetObjectGuid().GetRawValue(), human=speaker->GetObjectGuid().GetRawValue();
+    // Persistent event memories are accessed only for private group channels.
+    if(state.intent==Topic::Social || state.intent==Topic::None || Social().FindScene(human,actor,now))
+    {
+        if(state.privateAllowed)CompanionSeed(bot,speaker);
+        state.social=Social().Context(actor,human,state.privateAllowed,now);
+    }
+    if(state.intent==Topic::Social)
+        Social().Answer(actor,human,message,state.privateAllowed,state.answer,now);
+    else if((state.intent==Topic::Bags && state.privateAllowed) || state.intent==Topic::Gear)
+    {
+        auto facts=Inventory(bot,state.intent==Topic::Bags,message);
+        state.answer=facts.summary;state.evidence=facts.detail;
+    }
+    else if((state.intent==Topic::NextQuest || state.intent==Topic::AvailableQuests ||
+             state.intent==Topic::QuestOverlap) && state.privateAllowed)
+    {
+        auto plan=PlanQuests(speaker,bot,state.intent==Topic::AvailableQuests);
+        state.answer=plan.summary;state.evidence=plan.detail;
+        if(!plan.steps.empty()) state.questId=plan.steps.front().id;
+    }
+    else if(state.intent==Topic::QuestChain)
+    {
+        bool ambiguous=false;auto* entry=Knowledge().NamedQuest(q,ambiguous);
+        if(entry) {state.questId=entry->id;state.evidence=QuestChain(state.privateAllowed?speaker:nullptr,sObjectMgr.GetQuestTemplate(entry->id));state.answer=state.evidence;}
+        else if(ambiguous)state.answer="Several quests have that title. Please give the quest ID.";
+    }
+    else if(state.intent==Topic::Knowledge)
+    {
+        if(Mechanics().Lookup(q,state.answer))state.evidence=state.answer;
+        else if(Knowledge().Search(message,state.evidence,speaker))state.answer=state.evidence;
+    }
+    else if((state.intent==Topic::Quests || state.intent==Topic::Progress) && state.privateAllowed)
+    {
+        bool ambiguous=false;auto* entry=Knowledge().NamedQuest(q,ambiguous);
+        if(ambiguous)state.answer="Several quests have that title. Please give the quest ID.";
+        else if(entry)
+        {
+            state.questAboutHuman=!Any(q,{"your","you","yours"});state.questId=entry->id;
+            state.evidence=DescribeQuest(state.questAboutHuman?speaker:bot,sObjectMgr.GetQuestTemplate(entry->id));
+            state.answer=(state.questAboutHuman?"Your quest: ":"My quest: ")+state.evidence;
+        }
+        else
+        {FormatFact(speaker,bot,message,state.intent,state.privateAllowed,state.answer);state.evidence=state.answer;}
+    }
+    else
+    {
+        FormatFact(speaker,bot,message,state.intent,state.privateAllowed,state.answer);
+        state.evidence=state.answer;
+        if(state.privateAllowed && (state.intent==Topic::Quests || state.intent==Topic::Progress))
+        {
+            bool ambiguous=false;auto* entry=Knowledge().NamedQuest(q,ambiguous);
+            if(entry && HasInLog(Any(q,{"your","you","yours"})?bot:speaker,entry->id))state.questId=entry->id;
+        }
+    }
+    // A quest follow-up can name the previously resolved quest without choosing
+    // another character's first quest by accident.
+    if(state.privateAllowed && state.intent==Topic::Progress &&
+       !state.questId && found!=memory.end() && found->second.questId &&
+       now-found->second.seen<std::chrono::seconds(90))
+    {
+        if(auto* quest=sObjectMgr.GetQuestTemplate(found->second.questId))
+        {
+            state.questAboutHuman=Any(q,{"my","mine","i"})?true:
+                Any(q,{"your","you","yours"})?false:found->second.questAboutHuman;
+            state.evidence=DescribeQuest(state.questAboutHuman?speaker:bot,quest);
+            state.answer=(state.questAboutHuman?"Your quest: ":"My quest: ")+state.evidence;
+            state.questId=quest->GetQuestId();
+        }
+    }
     state.answer = Limit(state.answer, 240);
     if (!state.answer.empty())
     {
         if (memory.size() >= 512) memory.clear();
-        memory[key] = {state.intent, now};
+        memory[key] = {state.intent, state.questId, state.questAboutHuman, now};
     }
     if (state.privateAllowed)
     {
@@ -981,10 +821,6 @@ inline GameState ReadState(Player* speaker, Player* bot, std::string const& mess
                   << " hp=" << static_cast<uint32_t>(member->GetHealthPercent()) << "%";
         }
         state.party = Limit(party.str(), 260);
-        if (Any(Normalise(message), {"quest", "quests", "objective", "objectives", "next"}) &&
-            state.intent != Topic::NextQuest)
-            QuestPlan(speaker, bot, state.questAdvice);
-        state.questAdvice = Limit(state.questAdvice, 240);
     }
     return state;
 }
@@ -1000,11 +836,13 @@ inline std::string RequestContext(GameState const& state)
     out << "\nIntent=" << IntentName(state.intent)
         << "; private party facts=" << (state.privateAllowed ? "allowed" : "withheld");
     if (!state.answer.empty()) out << "\nVerified answer: " << state.answer;
+    if (!state.evidence.empty() && state.evidence!=state.answer) out << "\nRelevant verified detail: " << Limit(state.evidence,1500);
     out << "\nMissing facts are unknown. No action has been performed. "
            "Do not infer a route, drop source or cast success.";
+    if (!state.social.empty()) out << "\nSocial context (personality/preferences are roleplay): " << state.social;
     if (!state.party.empty()) out << "\nNearby party (at most 5): " << state.party;
     if (!state.questAdvice.empty()) out << "\nPlayer quest advice: " << state.questAdvice;
-    return Limit(out.str(), 1200);
+    return Limit(out.str(), 2400);
 }
 
 }} // namespaces

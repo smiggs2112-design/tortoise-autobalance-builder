@@ -75,13 +75,14 @@ jobs:
           assert 'make -j"$(nproc)"' in content, 'Upstream build command changed: review first'
           preflight = ('make -j2 -f modules/CMakeFiles/modules.dir/build.make '
               'modules/CMakeFiles/modules.dir/mod-azeroth-voices/src/AzerothVoicesManager.cpp.o '
-              'modules/CMakeFiles/modules.dir/mod-azeroth-voices/src/AzerothVoicesScripts.cpp.o && \\\n'
+              'modules/CMakeFiles/modules.dir/mod-azeroth-voices/src/AzerothVoicesScripts.cpp.o '
+              'modules/CMakeFiles/modules.dir/mod-azeroth-voices/src/AzerothVoicesNativeV4.cpp.o && \\\n'
               '  make -j2')
           content = content.replace('make -j"$(nproc)"', preflight)
           p.write_text(content)
           PY
           mkdir -p upstream/enhancements
-          cp enhancements/enhance_voices.py enhancements/AzerothVoicesDeterministic.h enhancements/AzerothVoicesIntelligenceV4.h enhancements/AzerothVoicesIntentV4.h enhancements/humanlike-knowledge.tsv upstream/enhancements/
+          cp enhancements/enhance_voices.py enhancements/*.h enhancements/*.cpp enhancements/*.inc enhancements/humanlike-knowledge.tsv upstream/enhancements/
           # Upstream .dockerignore permits only docker/** by default.
           printf '\n!enhancements/\n!enhancements/**\n' >> upstream/.dockerignore
 

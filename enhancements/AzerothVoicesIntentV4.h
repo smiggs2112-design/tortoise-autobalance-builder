@@ -45,13 +45,24 @@ inline bool Contains(std::string const& a, std::string const& b) { return Has(a,
     enum class Topic
     {
         None, Money, Weapon, Gear, Bags, Quests, Progress, Level,
-        Health, Mana, Spells, Resurrection, NextQuest, Knowledge, Role, SpellReady
+        Health, Mana, Spells, Resurrection, NextQuest, Knowledge, Role, SpellReady, AvailableQuests, QuestChain, QuestOverlap, Social
     };
 
 inline Topic Recognise(std::string const& q, std::string const& original,
                         Topic previous = Topic::None)
         {
             if (q.size() > 220) return Topic::None;
+            if (Any(q,{"do you remember","remember our","met before","what do you think of me",
+                "do you like me","are we friends","what do you like","what do you prefer","your preference",
+                "your personality","what are you talking about","what were you talking about","what was that about",
+                "what are you two discussing","what are you discussing","can i join","thank you","thanks",
+                "good job","well done","hello","good morning","good evening"}) || q=="hi" || q=="hey" ||
+                (!IsQuestion(q,original) && Any(q,{"i think","i prefer","let s","we should"}))) return Topic::Social;
+            if (Any(q,{"quest chain","next in the chain","quest prerequisite","what comes after","what happens after","follow up quest"})) return Topic::QuestChain;
+            if (Any(q,{"nearby quests","available quests","quests nearby","quests are nearby","quests around here","got any work around here","pick up quests","quests can i accept","quest givers nearby"})) return Topic::AvailableQuests;
+            if (Any(q,{"overlapping quests","shared objectives","quests overlap","same targets"})) return Topic::QuestOverlap;
+            if (Any(q,{"do you have","have any","carrying any"}) && !Any(q,{"quest","quests","spell","spells"}) &&
+                (!Any(q,{"gold","money","coins","cash","silver","copper"}) || Any(q,{"ore","item","items","bars"}))) return Topic::Bags;
             if (Any(q, {"your role", "are you the tank", "are you a healer", "are you dps"}))
                 return Topic::Role;
             if (Any(q, {"can you cast", "could you cast", "can you use", "ready to cast",
@@ -115,13 +126,17 @@ inline bool PrivateTopic(Topic t)
 {
     return t == Topic::Money || t == Topic::Bags || t == Topic::Quests ||
         t == Topic::Progress || t == Topic::NextQuest || t == Topic::Spells ||
-        t == Topic::Resurrection || t == Topic::SpellReady;
+        t == Topic::Resurrection || t == Topic::SpellReady ||
+        t == Topic::AvailableQuests || t == Topic::QuestOverlap;
 }
 inline char const* IntentName(Topic t)
 {
     switch (t)
     {
-        case Topic::NextQuest: return "quest_plan";
+        case Topic::NextQuest: case Topic::QuestOverlap: return "quest_plan";
+        case Topic::AvailableQuests: return "quest_discovery";
+        case Topic::QuestChain: return "quest_chain";
+        case Topic::Social: return "conversation and shared memories";
         case Topic::Quests: case Topic::Progress: return "quest_progress";
         case Topic::SpellReady: return "spell_readiness";
         case Topic::Knowledge: return "game_knowledge";

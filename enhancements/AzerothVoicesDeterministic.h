@@ -103,19 +103,12 @@ namespace Deterministic
         uint64_t deterministicReplies = 0, ollamaFallbacks = 0, socialExchanges = 0;
         uint64_t questPlans = 0, spellChecks = 0, proactiveWarnings = 0;
         std::map<uint64_t, Moment> nextCareForPlayer;
-        struct Scene
-        {
-            uint64_t botGuid = 0;
-            Moment last = Moment();
-            std::string subject;
-        };
-        std::map<uint64_t, Scene> conversations;
         uint32_t round = 0;
         struct Pending
         {
             uint64_t first = 0;
             uint64_t second = 0;
-            uint64_t witness = 0;
+            uint64_t witness = 0, scene = 0, partner = 0;
             uint32_t map = 0;
             Moment due = Moment();
             std::string reply;
@@ -189,20 +182,6 @@ namespace Deterministic
         {
             if (!IsPlayableBot(bot) || !speaker)
                 return false;
-            std::string const q = Normalise(message);
-            if (IntelligenceV4::Any(q, {"what are you talking about",
-                "what are you two discussing", "what was that about",
-                "what were you talking about", "what are you discussing"}))
-            {
-                auto scene = conversations.find(speaker->GetObjectGuid().GetRawValue());
-                if (scene != conversations.end() &&
-                    Clock::now() - scene->second.last < std::chrono::seconds(210))
-                {
-                    answer = "We were talking about " + scene->second.subject + ".";
-                    ++deterministicReplies;
-                    return true;
-                }
-            }
             bool const privateChannel = scope == ChatScope::Party ||
                 scope == ChatScope::Raid || scope == ChatScope::Whisper;
             auto const state = IntelligenceV4::ReadState(speaker, bot, message, privateChannel);
@@ -257,23 +236,30 @@ namespace Deterministic
             if (scope != ChatScope::Say && scope != ChatScope::Party &&
                 scope != ChatScope::Raid && scope != ChatScope::Whisper)
                 return false;
+            // A nearby human turn interrupts queued ambient lines immediately,
+            // including statements which subsequently use the normal LLM path.
+            auto activeScene=IntelligenceV4::Social().scenes.find(player->GetObjectGuid().GetRawValue());
+            if(activeScene!=IntelligenceV4::Social().scenes.end() && Clock::now()<activeScene->second.expires)
+            {
+                Player* participant=ObjectAccessor::FindPlayer(ObjectGuid(activeScene->second.first));
+                if(IsPlayableBot(participant) && Near(player,participant))
+                    IntelligenceV4::Social().Join(player->GetObjectGuid().GetRawValue(),activeScene->second.first,Clock::now());
+            }
             if (!IsQuestion(Normalise(message), message) &&
-                !Any(Normalise(message), {"really", "not much then", "that all"})) return false;
+                !Any(Normalise(message), {"really", "not much then", "that all"}) &&
+                IntelligenceV4::Recognise(Normalise(message),message)!=Topic::Social) return false;
             Player* bot = Resolve(player, scope, message, whisperTarget);
             // A player can join the ongoing two-bot discussion in /say
             // without needing to name a participant.
             if (!bot && scope == ChatScope::Say &&
-                IntelligenceV4::Any(Normalise(message),
-                    {"what are you talking about", "what was that about",
-                     "what are you two discussing", "what are you discussing"}))
+                IntelligenceV4::Any(Normalise(message),{"what are you talking about","what was that about",
+                    "what are you two discussing","what are you discussing","can i join"}))
             {
-                auto scene = conversations.find(player->GetObjectGuid().GetRawValue());
-                if (scene != conversations.end() &&
-                    Clock::now() - scene->second.last < std::chrono::seconds(210))
+                auto scene=IntelligenceV4::Social().scenes.find(player->GetObjectGuid().GetRawValue());
+                if(scene!=IntelligenceV4::Social().scenes.end() && Clock::now()<scene->second.expires)
                 {
-                    Player* participant = ObjectAccessor::FindPlayer(ObjectGuid(scene->second.botGuid));
-                    if (IsPlayableBot(participant) && Near(player, participant))
-                        bot = participant;
+                    Player* participant=ObjectAccessor::FindPlayer(ObjectGuid(scene->second.first));
+                    if(IsPlayableBot(participant) && Near(player,participant))bot=participant;
                 }
             }
             if (!bot)
@@ -292,13 +278,19 @@ namespace Deterministic
                 return false;
             bool sent = Deliver(player, bot, scope, answer);
             if (sent)
+            {
                 lastReplies[bot->GetObjectGuid().GetRawValue()] = Clock::now();
+                auto topic=IntelligenceV4::Recognise(Normalise(message),message);
+                IntelligenceV4::RecordInteraction(player,bot,message,topic);
+                IntelligenceV4::Social().Join(player->GetObjectGuid().GetRawValue(),bot->GetObjectGuid().GetRawValue(),Clock::now());
+            }
             return sent;
         }
 
         void Tick(uint32_t diff)
         {
             (void) diff;
+            if(!IntelligenceV4::Limits().enabled) {pending.clear();return;}
             // Late reply: no LLM and no recursion from bot-originated /say.
             auto now = Clock::now();
             if (now >= nextStats)
@@ -322,12 +314,14 @@ namespace Deterministic
                 Player* first = ObjectAccessor::FindPlayer(ObjectGuid(it->first));
                 Player* second = ObjectAccessor::FindPlayer(ObjectGuid(it->second));
                 Player* witness = ObjectAccessor::FindPlayer(ObjectGuid(it->witness));
-                if (IsPlayableBot(first) && IsPlayableBot(second) && witness &&
+                Player* partner = ObjectAccessor::FindPlayer(ObjectGuid(it->partner));
+                if (IntelligenceV4::Social().CanContinue(it->witness,it->scene,now) &&
+                    IsPlayableBot(first) && IsPlayableBot(second) && IsPlayableBot(partner) && witness &&
                     witness->IsInWorld() && !witness->IsInCombat() &&
                     witness->FindMap() && !witness->FindMap()->IsDungeon() &&
                     !witness->FindMap()->IsBattleGround() &&
                     first->GetMapId() == it->map &&
-                    !first->IsInCombat() && !second->IsInCombat() &&
+                    !first->IsInCombat() && !second->IsInCombat() && !partner->IsInCombat() && Near(partner,witness) &&
                     Near(first, witness) && Near(first, second) && Near(second, witness))
                     second->Say(it->reply, LANG_UNIVERSAL);
                 it = pending.erase(it);
@@ -426,71 +420,34 @@ namespace Deterministic
                 if (!two)
                     continue;
 
-                std::string first;
-                std::string second;
-                // Only claim a shared quest if both bots truly have it.
-                uint32_t sharedQuest = 0;
-                for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE && !sharedQuest; ++slot)
+                std::string topic="how to spend the next stretch of our travels";
+                std::string shared;
+                if(IntelligenceV4::HasSharedQuest(one,two,shared))topic="finishing "+IntelligenceV4::Limit(shared,55);
+                else if(player->GetGroup() && player->GetGroup()==one->GetGroup() &&
+                        player->GetGroup()==two->GetGroup())
                 {
-                    uint32_t const q = GetPlayerQuestSlotQuestId(one, slot);
-                    if (q && one->GetQuestStatus(q) == QUEST_STATUS_INCOMPLETE &&
-                        two->GetQuestStatus(q) == QUEST_STATUS_INCOMPLETE)
-                        sharedQuest = q;
+                    auto advice=IntelligenceV4::PlanQuests(player,one);
+                    if(!advice.steps.empty())topic="our plans for "+IntelligenceV4::Limit(advice.steps.front().title,50);
                 }
-                std::string topic = "our travels";
-                if (sharedQuest && sObjectMgr.GetQuestTemplate(sharedQuest))
+                auto seedA=IntelligenceV4::CompanionSeed(one,player);
+                auto seedB=IntelligenceV4::CompanionSeed(two,player);
+                auto lines=IntelligenceV4::Social().Exchange(one->GetObjectGuid().GetRawValue(),
+                    two->GetObjectGuid().GetRawValue(),topic,seedA,seedB,now);
+                uint64_t scene=IntelligenceV4::Social().SceneFor(id,one->GetObjectGuid().GetRawValue(),
+                    two->GetObjectGuid().GetRawValue(),topic,now);
+                one->Say(IntelligenceV4::Limit(lines.front(),220),LANG_UNIVERSAL);
+                for(size_t turn=1;turn<lines.size() && pending.size()<8;++turn)
                 {
-                    std::string title = sObjectMgr.GetQuestTemplate(sharedQuest)->GetTitle();
-                    if (title.size() > 65) title.resize(65);
-                    topic = title;
-                    first = (round++ % 2 == 0) ?
-                        "How is " + title + " coming along?" :
-                        "Still working on " + title + ".";
-                    second = (round++ % 3 == 0) ?
-                        "Slowly. Let's finish it properly." :
-                        "I'm still working on it. We'll get there.";
+                    Pending p;
+                    p.first=one->GetObjectGuid().GetRawValue();
+                    p.partner=two->GetObjectGuid().GetRawValue();
+                    p.second=turn%2?two->GetObjectGuid().GetRawValue():one->GetObjectGuid().GetRawValue();
+                    p.witness=id;p.scene=scene;p.map=one->GetMapId();
+                    p.due=now+std::chrono::seconds(6*turn);
+                    p.reply=IntelligenceV4::Limit(lines[turn],220);
+                    pending.push_back(std::move(p));
                 }
-                else if (IntelligenceV4::IsHealer(one) &&
-                         two->GetHealthPercent() < 70.0f)
-                {
-                    topic = "getting ready for the next fight";
-                    first = "You're looking a bit worn down. Need a moment?";
-                    second = "A short rest would help.";
-                }
-                else
-                {
-                    static char const* const openings[] = {
-                        "You seen much happening around here?",
-                        "Feels quieter than usual out here.",
-                        "Think we're heading the right way?",
-                        "I've been meaning to sort my bags out."
-                    };
-                    static char const* const replies[] = {
-                        "Not much. Probably for the best.",
-                        "Give it a minute. Something always turns up.",
-                        "Hopefully. I'd rather not double back.",
-                        "Same, but I'll worry about it later."
-                    };
-                    size_t index = round++ % 4;
-                    first = openings[index];
-                    second = replies[index];
-                }
-                if (first.size() > 140 || second.size() > 140)
-                    continue;
-                one->Say(first, LANG_UNIVERSAL);
-                Pending p;
-                p.first = one->GetObjectGuid().GetRawValue();
-                p.second = two->GetObjectGuid().GetRawValue();
-                p.witness = id;
-                p.map = one->GetMapId();
-                p.due = now + std::chrono::seconds(4);
-                p.reply = second;
-                if (pending.size() >= 8)
-                    pending.erase(pending.begin());
-                pending.push_back(std::move(p));
-                lastSocialByPlayer[id] = now;
-                if (conversations.size() > 128) conversations.clear();
-                conversations[id] = {one->GetObjectGuid().GetRawValue(), now, topic};
+                lastSocialByPlayer[id]=now;
                 ++socialExchanges;
                 // Global cap: one exchange per 45 seconds even with many players.
                 break;

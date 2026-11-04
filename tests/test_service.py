@@ -21,6 +21,13 @@ class IntentTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('g++'), 'g++ is required (provided in CI)')
     def test_live_readers_with_fake_core(self):
+        self.compile_fake_core('test_state.cpp')
+
+    @unittest.skipUnless(shutil.which('g++'), 'g++ is required (provided in CI)')
+    def test_expanded_knowledge_quests_and_social(self):
+        self.compile_fake_core('test_expanded.cpp')
+
+    def compile_fake_core(self, source):
         with tempfile.TemporaryDirectory() as tmp:
             headers = Path(tmp)
             for name in ('Player.h', 'Group.h', 'ObjectMgr.h', 'QuestDef.h', 'SpellMgr.h',
@@ -30,7 +37,7 @@ class IntentTests(unittest.TestCase):
             subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra',
                             '-I', str(headers), '-I', str(ROOT / 'tests'),
                             '-I', str(ROOT / 'enhancements'),
-                            str(ROOT / 'tests/test_state.cpp'), '-o', str(binary)], check=True)
+                            str(ROOT / 'tests' / source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
 

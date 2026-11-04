@@ -21,6 +21,9 @@ copyfile(args.assets / "AzerothVoicesDeterministic.h",
 copyfile(args.assets / "AzerothVoicesIntelligenceV4.h",
          root / "AzerothVoicesIntelligenceV4.h")
 copyfile(args.assets / "AzerothVoicesIntentV4.h", root / "AzerothVoicesIntentV4.h")
+for name in ("AzerothVoicesSocialV4.h", "AzerothVoicesNativeV4.h", "AzerothVoicesKnowledgeV4.h",
+             "AzerothVoicesNativeV4.cpp", "AzerothVoicesNativeManagerV4.inc"):
+    copyfile(args.assets / name, root / name)
 knowledge_target = args.knowledge_target
 knowledge_target.parent.mkdir(parents=True, exist_ok=True)
 copyfile(args.assets / "humanlike-knowledge.tsv", knowledge_target)
@@ -95,9 +98,40 @@ manager=replace_once(manager,
     '        appendBlock(keptHistory);\n        appendBlock(keptSurrounding);\n        appendBlock(keptSnapshotHistory);\n        appendBlock(keptRag);\n        appendBlock(keptCurrent);\n        appendBlock(keptSnapshot);',
     '        appendBlock(keptHistory);\n        appendBlock(keptSurrounding);\n        appendBlock(keptSnapshotHistory);\n        appendBlock(keptRag);\n        appendBlock(keptCurrent);\n        appendBlock(keptSnapshot);',
     "Context ordering invariant")
+manager += '\n#include "AzerothVoicesNativeManagerV4.inc"\n'
+manager = replace_once(manager,
+    '                        ApplyDeliveredSentiment(line.request);',
+    '                        ApplyDeliveredSentiment(line.request);\n'
+    '                        if (line.request.actor.kind == ActorKind::PlayerBot && !line.request.speaker.isBot)\n'
+    '                        {\n'
+    '                            Player* bot = ObjectAccessor::FindPlayer(ObjectGuid(line.request.actor.guid));\n'
+    '                            Player* human = ObjectAccessor::FindPlayer(ObjectGuid(line.request.speaker.guid));\n'
+    '                            IntelligenceV4::RecordInteraction(human,bot,line.request.incomingMessage,\n'
+    '                                IntelligenceV4::Recognise(IntelligenceV4::Normalise(line.request.incomingMessage),line.request.incomingMessage),false);\n'
+    '                        }', "Observe only delivered model conversations")
 manager_path.write_text(manager)
+header_path = root / "AzerothVoicesManager.h"
+header = header_path.read_text()
+header = replace_once(header, '#include "AzerothVoicesAddon.h"',
+    '#include "AzerothVoicesAddon.h"\n#include "AzerothVoicesNativeV4.h"', "Shared native interface")
+header = replace_once(header, '        static Manager& Instance();',
+    '        static Manager& Instance();\n'
+    '        IntelligenceV4::ReaderLimits SharedReaderLimits() const;\n'
+    '        IntelligenceV4::SocialSeed SharedSocialSeed(Player* bot, Player* human);\n'
+    '        void SharedSocialDelivered(Player* bot, Player* human, int delta);', "Expose bounded native reads")
+header_path.write_text(header)
 
 scripts=scripts_path.read_text()
+scripts=replace_once(scripts,'                Manager::Instance().Start();',
+    '                Manager::Instance().Start();\n                IntelligenceV4::InstallNativeBridge();',
+    "Install native shared-data adapters")
+scripts=replace_once(scripts,
+    '                if (reload)\n                    Manager::Instance().Reload();',
+    '                if (reload)\n                {\n'
+    '                    Manager::Instance().Reload();\n'
+    '                    IntelligenceV4::InstallNativeBridge();\n'
+    '                    Deterministic::Instance().pending.clear();\n                }',
+    "Refresh shared indexes and local social state on module reload")
 scripts=replace_once(scripts,
     '#include "AzerothVoicesManager.h"',
     '#include "AzerothVoicesManager.h"\n#include "AzerothVoicesBotSeam.h"\n#include "AzerothVoicesDeterministic.h"\n#include "Chat/Chat.h"\n#include "Group.h"',
@@ -315,4 +349,4 @@ new='''                parsed.local = hostLower == "localhost" || hostLower == "
                                hostLower == "::1" || hostLower == "tortoise-ollama";'''
 provider=replace_once(provider,old,new,"Explicit internal Docker DNS endpoint")
 provider_path.write_text(provider)
-print("Applied shared bounded game-state/intent service, local answers and Ollama context; gameplay engines unchanged.")
+print("Applied expanded world knowledge, quest advice and shared social memory; gameplay engines unchanged.")

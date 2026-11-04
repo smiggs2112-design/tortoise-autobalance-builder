@@ -7,6 +7,51 @@ still pass the acceptance checks below. The builder never connects to QNAP.
 
 ## Shared facts and intents
 
+The knowledge/quest/social expansion adds:
+
+- Server-loaded spell and game-object knowledge as well as quests/items/NPCs.
+  Unique short names (such as Hogger) and typed IDs are supported; ambiguous
+  names ask for an ID. Ranked spells are grouped within their spell family.
+- Conditional loot sources and vendors from TortoiseBots' existing shared indexes.
+  Voices introduces no loot SQL or private-layout casts. Native indexes may warm
+  lazily on the first relevant query; measure this cost in the test environment.
+- Real bag contents/stack counts and slot-labelled equipment in the shared capture,
+  restoring the detail lost when the earlier bot snapshot was replaced.
+- Ranked quest plans: completed turn-ins, shared unfinished targets across nearby
+  party members, overlap across the human's active quests, level suitability and
+  straight-line clustering. Each character retains individual credit requirements.
+- Discovery of recorded nearby givers whose quests pass the core's character
+  eligibility and quest-log/source-item capacity checks. This does not guarantee
+  a friendly, present or currently usable giver in the player's instance.
+- Direct prerequisites and up to five chain links, with cycle detection and current
+  eligibility labels. Personal quest follow-ups retain both the quest ID and owner.
+- Local social replies seeded from existing Voices personality traits, persistent
+  relationship scores and verified event memories. No new memory SQL schema is added.
+  Local conversations store canonical topics, not raw player chat.
+- Three-turn exchanges with stable preferences, mild disagreement, repeat-topic
+  recall and an invitation for the human to join. A human turn stops queued lines;
+  each delayed turn rechecks both bots, the witness, combat, faction and instance.
+- Thanks/compliments can adjust the existing persistent sentiment score by at most
+  one per bot/player pair per minute, respecting Sentiment.Enable and the configured
+  conversation delta limit. Ordinary LLM sentiment handling remains upstream-owned.
+
+Examples: "Where can I get item Hunting Trophy?", "What does Hogger drop?",
+"What is spell 133?", "What quests are nearby?", "Which quests have shared objectives?",
+"What comes after quest 123?", "Do you remember me?", "What do you prefer?",
+"What are you two discussing?" and "Can I join?". Names/IDs must exist in the
+running server; example item/quest names are not promises of availability.
+
+Persistent event memory continues to obey the existing Voices configuration and
+generation chances. The local friendship/topic cache lasts at most six hours and
+resets on module reload/restart; stored Voices records survive according to the
+existing database settings. Module reload also invalidates the world index and
+discards pending local dialogue. This is advisory conversation: no acceptance,
+turn-in, movement, loot, trade, cast or group formation is performed.
+
+Full target/action success verification, additional proactive care checks, a new
+contextual-emote system, the companion addon and new open-world gameplay remain
+outside this expansion. In-game regression and load tests are still required.
+
 `AzerothVoicesIntentV4.h` owns normalisation, phrase boundaries, topic recognition,
 follow-up topic handling and private-channel policy. `AzerothVoicesIntelligenceV4.h`
 owns the live readers and `ReadState`. Both deterministic delivery and the Voices
@@ -24,9 +69,11 @@ The local TSV mechanics catalogue and short-lived follow-up intent memory are
 also shared by both answer paths. The catalogue is not
 an exhaustive game database or an LLM instruction source. World knowledge comes
 from the running server's loaded quest, item and creature templates. Duplicate
-long names defer instead of choosing an arbitrary entry. This service cannot
-infer drop tables, routes, unaccepted quests, target cast validity or completed
-actions from those templates.
+long names defer instead of choosing an arbitrary entry. The native adapter also reuses TortoiseBots' shared loot/vendor indexes, while
+quest discovery uses the core's CanTakeQuest/CanAddQuest rules. Recorded sources
+are conditional and incomplete where the native indexes cannot resolve references.
+The service does not infer drop probabilities, walkable routes, live spawn presence,
+target cast validity or completed actions.
 
 ### Ownership and privacy
 
@@ -35,7 +82,7 @@ actions from those templates.
 - "What are my quests?" and named player quest questions describe the human's log.
 - "Where should we go next?" plans from the human's active quests, prioritising
   completed turn-ins, shared incomplete quests, level suitability and quest zone.
-- Bot finances, bags, quests and spells require a shared group **and** party,
+- Bot finances, bags, personal quest progress and learned spells require a shared group **and** party,
   raid or whisper delivery. Public `/say` withholds them even for group members.
 - Equipment, role, level and health may be answered publicly when addressed.
 - No answer or model output is interpreted as a game command.
@@ -48,23 +95,32 @@ Actual casting and action outcome remain TortoiseBots' responsibility.
 ### Bounds and scheduling
 
 - Input: 220 bytes for fact queries; 160 bytes for explicit commands.
-- Verified local answer: at most 240 bytes; shared request block: at most 1,200.
+- Verified local answer: at most 240 bytes; shared request block: at most 2,400. Item detail respects existing include flags
+  and MaximumItems (hard ceiling 50), with a 1,600-byte complete-item budget.
 - Active quests: at most the core's fixed quest-log size; general log summaries
-  show two quests and up to two counters per quest. Named quests search the log.
+  show two quests and up to two counters per quest. Named quests and quest IDs search the log.
+  Ranked plans contain at most three steps; discovery examines at most 256 recorded
+  givers / 1,024 relations within 2,000 straight-line yards.
 - Nearby party context: at most five members within 50 yards, capped to 260 bytes.
-- Loaded-name index: at most 50,000 entries per category, names at most 160 bytes.
+- Loaded-name index: at most 100,000 entries per category, names at most 160 bytes. Spells scan at most 300,000 IDs and group ranked
+  names within a spell family, leaving ambiguous names unresolved.
   An oversized category is disabled as a whole to avoid hiding ambiguous names.
   The index is built lazily once; restart after template reloads.
-- Spawn hint: at most 4,096 records inspected, on demand. A matching record on
+- Spawn index: one lazy pass over at most 300,000 creature and 300,000 object
+  records, capped to 600,000 stored points and 4,096 per entry. A matching record on
   the human's map yields world X/Y, never an assertion that the creature is alive,
   in this instance, or reachable. A budget miss withholds the location.
 - Social scan: every 45 seconds; at most 12 human anchor locations; one exchange
-  per global scan and a 240-second cooldown per human. At most eight delayed lines.
+  per global scan and a 240-second cooldown per human. Three lines per exchange,
+  with replies at six and twelve seconds; at most eight delayed lines.
 - Advisory party recovery prompts: at most one per scan, with a five-minute
   cooldown per human. They perform no healing, movement, rebuff or strategy change.
 - Ambient exchanges require nearby same-team idle bots and a human witness;
   dungeons, battlegrounds and combat are excluded, including delayed delivery.
 - Conversation subjects expire after 210 seconds; follow-up topics after 90.
+  Local social pairs are capped to 512, bot friendships to 256, scenes to 128,
+  and expire after six hours (scenes after 210 seconds). Persistent personality,
+  sentiment and event memories reuse the existing Voices stores/configuration.
 - `[VoicesV4]` counters are logged every ten minutes. They count local resolutions,
   fallback attempts, quest/spell queries, social/advisory activity and index hits;
   they are not world-tick or provider-latency measurements.
@@ -134,10 +190,8 @@ Enable `AzerothVoices.Environment.Enable = 1` to send the shared block to Ollama
 The service replaces the older bot environment/item/snapshot block so the model
 does not receive divergent duplicated spell/quest facts. Its bounds above apply
 independently of the older `Environment.MaximumItems`/`Snapshot.Maximum*` knobs.
-Non-player NPC context stays upstream-owned. Deterministic questions and social
-scheduling currently run independently of the Ollama enable/pause setting.
-Rollback the candidate if those behaviours are unwanted; no live config is changed
-by this build.
+Non-player NPC context stays upstream-owned. Deterministic questions and social scheduling now respect the manager enable/pause
+state. Pausing discards queued local social lines. No live config is changed by this build.
 
 The existing Ollama bridge example in `deploy/tortoise-ollama-bridge.yml` remains
 optional deployment work. The build alone neither creates a network nor changes
