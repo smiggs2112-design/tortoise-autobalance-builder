@@ -19,6 +19,20 @@ class IntentTests(unittest.TestCase):
                             str(ROOT / 'tests/test_intents.cpp'), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
+    @unittest.skipUnless(shutil.which('g++'), 'g++ is required (provided in CI)')
+    def test_live_readers_with_fake_core(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            headers = Path(tmp)
+            for name in ('Player.h', 'Group.h', 'ObjectMgr.h', 'QuestDef.h', 'SpellMgr.h',
+                         'ScriptMgr.h', 'Bag.h', 'Item.h', 'AzerothVoicesBotSeam.h'):
+                (headers / name).write_text('#include "fake_core.h"\n')
+            binary = headers / ('state.exe' if os.name == 'nt' else 'state')
+            subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra',
+                            '-I', str(headers), '-I', str(ROOT / 'tests'),
+                            '-I', str(ROOT / 'enhancements'),
+                            str(ROOT / 'tests/test_state.cpp'), '-o', str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
 
 @unittest.skipUnless(os.environ.get('VOICES_SOURCE_TEST_ROOT'), 'pinned source checkout required')
 class PinnedPatchTests(unittest.TestCase):

@@ -20,7 +20,8 @@ or server-loaded game knowledge. Unknown questions still reach Ollama with the
 available verified facts. Ollama receives facts captured at request time, not a
 promise that the state remains current when its answer arrives.
 
-The local TSV mechanics catalogue remains a deterministic fallback. It is not
+The local TSV mechanics catalogue and short-lived follow-up intent memory are
+also shared by both answer paths. The catalogue is not
 an exhaustive game database or an LLM instruction source. World knowledge comes
 from the running server's loaded quest, item and creature templates. Duplicate
 long names defer instead of choosing an arbitrary entry. This service cannot
@@ -98,7 +99,8 @@ The companion addon and new open-world gameplay interactions are deferred.
 ## Build verification
 
 CI runs catalogue checks, compiles and executes the actual C++ intent/privacy
-policy, applies the patch to the pinned Voices checkout and checks fail-closed
+policy and live-reader tests with a small fake core, applies the patch to the
+pinned Voices checkout and checks fail-closed
 repeat application, then compiles/links the complete Linux amd64 world image.
 It publishes:
 
@@ -172,7 +174,7 @@ database while the live world is active. Do not change/remove NAS volumes.
    navigation, wipes/repop and existing command/owner permissions. Check AutoBalance
    health/damage/scaling against the existing pinned candidate.
 9. Measure world tick latency, CPU/RAM, response pacing and Ollama queue/latency
-   at the intended 800–1,200-bot population. Compare against the current deployment;
+   at the intended 800â€“1,200-bot population. Compare against the current deployment;
    the source bounds do not establish acceptable QNAP performance.
 10. Verify read-only catalogue reload and candidate rollback. Record observations,
     image digest and config differences before considering promotion.

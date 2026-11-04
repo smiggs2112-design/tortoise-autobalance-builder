@@ -93,15 +93,8 @@ namespace Deterministic
 
     using Topic = IntelligenceV4::Topic;
 
-    struct FollowUp
-    {
-        Topic topic = Topic::None;
-        Moment last = Moment();
-    };
-
     struct Engine
     {
-        std::map<std::pair<uint64_t, uint64_t>, FollowUp> followUps;
         std::map<uint64_t, Moment> lastReplies;
         std::map<uint64_t, Moment> lastSocialByPlayer;
         std::map<std::string, Moment> lastSocialByMap;
@@ -128,138 +121,6 @@ namespace Deterministic
             std::string reply;
         };
         std::vector<Pending> pending;
-
-        struct Knowledge
-        {
-            std::string id;
-            std::vector<std::string> phrases;
-            std::string answer;
-            std::string source;
-        };
-        std::vector<Knowledge> knowledge;
-        bool loaded = false;
-        Moment nextKnowledgePoll = Moment();
-        std::time_t lastKnowledgeMtime = 0;
-        long long lastKnowledgeSize = -1;
-
-        void LoadKnowledge()
-        {
-            if (loaded)
-                return;
-            loaded = true;
-            std::ifstream input("/opt/tortoise/data/humanlike-knowledge.tsv");
-            std::string line;
-            while (std::getline(input, line) && knowledge.size() < 3000)
-            {
-                if (line.empty() || line[0] == '#' || line.size() > 1200)
-                    continue;
-                std::vector<std::string> fields;
-                std::stringstream row(line);
-                std::string part;
-                while (std::getline(row, part, '\t'))
-                    fields.push_back(part);
-                if (fields.size() != 4 || fields[0].empty() || fields[2].empty())
-                    continue;
-                Knowledge entry;
-                entry.id = fields[0];
-                std::stringstream aliases(fields[1]);
-                while (std::getline(aliases, part, '|'))
-                    if (!Normalise(part).empty())
-                        entry.phrases.push_back(Normalise(part));
-                entry.answer = fields[2];
-                entry.source = fields[3];
-                if (!entry.phrases.empty())
-                    knowledge.push_back(std::move(entry));
-            }
-        }
-
-        static std::set<std::string> SignificantWords(std::string const& phrase)
-        {
-            static std::set<std::string> const stop = {
-                "what", "which", "where", "when", "why", "how", "does", "are",
-                "can", "you", "your", "the", "then", "that", "this", "for",
-                "with", "from", "about", "some", "have", "has", "into",
-                "there", "them", "they", "would", "could", "should",
-                "and", "who", "its", "out"
-            };
-            std::set<std::string> terms;
-            std::istringstream parts(Normalise(phrase));
-            std::string word;
-            while (parts >> word)
-            {
-                if (word.size() > 5 && word.back() == 's')
-                    word.pop_back();
-                if (word.size() >= 3 && !stop.count(word))
-                    terms.insert(word);
-            }
-            return terms;
-        }
-
-        bool Lookup(std::string const& text, std::string& answer)
-        {
-            LoadKnowledge();
-            // Literal phrases first, preferring the longest unambiguous match.
-            size_t best = 0;
-            size_t bestLength = 0;
-            bool tied = false;
-            for (size_t i = 0; i < knowledge.size(); ++i)
-                for (std::string const& phrase : knowledge[i].phrases)
-                {
-                    if (!Has(text, phrase))
-                        continue;
-                    if (phrase.size() > bestLength)
-                    {
-                        bestLength = phrase.size();
-                        best = i;
-                        tied = false;
-                    }
-                    else if (phrase.size() == bestLength && best != i)
-                        tied = true;
-                }
-            if (bestLength)
-            {
-                if (tied)
-                    return false;
-                answer = knowledge[best].answer;
-                return true;
-            }
-
-            // Cheap morphology-aware matching for equivalent phrasings.
-            // Require two distinctive words and >=80% alias coverage.
-            // A tie across entries defers to Ollama instead of guessing.
-            std::set<std::string> const words = SignificantWords(text);
-            float bestScore = 0.0f;
-            best = 0;
-            tied = false;
-            for (size_t i = 0; i < knowledge.size(); ++i)
-                for (std::string const& alias : knowledge[i].phrases)
-                {
-                    std::set<std::string> const terms = SignificantWords(alias);
-                    if (terms.size() < 2)
-                        continue;
-                    uint32_t matched = 0;
-                    for (std::string const& term : terms)
-                        if (words.count(term))
-                            ++matched;
-                    float coverage = static_cast<float>(matched) /
-                        static_cast<float>(terms.size());
-                    if (matched < 2 || coverage < 0.80f)
-                        continue;
-                    float score = matched * 10.0f + coverage;
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        best = i;
-                        tied = false;
-                    }
-                    else if (score == bestScore && best != i)
-                        tied = true;
-                }
-            if (bestScore == 0.0f || tied)
-                return false;
-            answer = knowledge[best].answer;
-            return true;
-        }
 
         Player* Resolve(Player* speaker, ChatScope scope, std::string const& original,
                         std::string const& whisperTarget)
@@ -289,7 +150,9 @@ namespace Deterministic
                     for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
                     {
                         Player* bot = ref->getSource();
-                        if (IsPlayableBot(bot) && bot != speaker)
+                        if (IsPlayableBot(bot) && bot != speaker &&
+                            (scope != ChatScope::Party || group->GetMemberGroup(bot->GetObjectGuid()) ==
+                                group->GetMemberGroup(speaker->GetObjectGuid())))
                             candidates.push_back(bot);
                     }
                 }
@@ -340,27 +203,15 @@ namespace Deterministic
                     return true;
                 }
             }
-            std::pair<uint64_t, uint64_t> const key(
-                speaker->GetObjectGuid().GetRawValue(), bot->GetObjectGuid().GetRawValue());
-            Topic previous = Topic::None;
-            auto found = followUps.find(key);
-            if (found != followUps.end() &&
-                Clock::now() - found->second.last < std::chrono::seconds(90))
-                previous = found->second.topic;
             bool const privateChannel = scope == ChatScope::Party ||
                 scope == ChatScope::Raid || scope == ChatScope::Whisper;
-            auto const state = IntelligenceV4::ReadState(speaker, bot, message, privateChannel, previous);
+            auto const state = IntelligenceV4::ReadState(speaker, bot, message, privateChannel);
             Topic const topic = state.intent;
             answer = state.answer;
-            if (answer.empty() && topic == Topic::Knowledge)
-                Lookup(q, answer);
             if (answer.empty()) return false;
             answer = IntelligenceV4::Limit(answer, 240);
             if (topic == Topic::NextQuest || topic == Topic::Progress) ++questPlans;
             if (topic == Topic::SpellReady) ++spellChecks;
-            if (followUps.size() > 512)
-                followUps.clear();
-            followUps[key] = {topic, Clock::now()};
             ++deterministicReplies;
             return true;
         }
@@ -406,6 +257,8 @@ namespace Deterministic
             if (scope != ChatScope::Say && scope != ChatScope::Party &&
                 scope != ChatScope::Raid && scope != ChatScope::Whisper)
                 return false;
+            if (!IsQuestion(Normalise(message), message) &&
+                !Any(Normalise(message), {"really", "not much then", "that all"})) return false;
             Player* bot = Resolve(player, scope, message, whisperTarget);
             // A player can join the ongoing two-bot discussion in /say
             // without needing to name a participant.
@@ -462,23 +315,7 @@ namespace Deterministic
                     static_cast<unsigned long long>(IntelligenceV4::Knowledge().lookups),
                     static_cast<unsigned long long>(IntelligenceV4::Knowledge().hits));
             }
-            // Hot-reload the mounted, read-only TSV without rebuilding or
-            // restarting mangosd. This is a bounded 60-second filesystem check.
-            if (now >= nextKnowledgePoll)
-            {
-                nextKnowledgePoll = now + std::chrono::seconds(60);
-                struct stat kb = {};
-                if (::stat("/opt/tortoise/data/humanlike-knowledge.tsv", &kb) == 0 &&
-                    (lastKnowledgeMtime != kb.st_mtime ||
-                     lastKnowledgeSize != static_cast<long long>(kb.st_size)))
-                {
-                    knowledge.clear();
-                    loaded = false;
-                    LoadKnowledge();
-                    lastKnowledgeMtime = kb.st_mtime;
-                    lastKnowledgeSize = static_cast<long long>(kb.st_size);
-                }
-            }
+            IntelligenceV4::Mechanics().Poll();
             for (auto it = pending.begin(); it != pending.end(); )
             {
                 if (now < it->due) { ++it; continue; }

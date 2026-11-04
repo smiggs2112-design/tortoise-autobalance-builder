@@ -14,6 +14,11 @@
 #include "SpellMgr.h"
 #include "ScriptMgr.h"
 
+#include <chrono>
+#include <ctime>
+#include <fstream>
+#include <sys/stat.h>
+#include <utility>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -596,6 +601,176 @@ inline std::string SpellList(Player* bot, bool resurrectionOnly)
 
 
 
+struct Catalogue
+{
+    struct Knowledge
+    {
+        std::string id;
+        std::vector<std::string> phrases;
+        std::string answer;
+        std::string source;
+    };
+    std::vector<Knowledge> knowledge;
+    bool loaded = false;
+    std::chrono::steady_clock::time_point nextKnowledgePoll = std::chrono::steady_clock::time_point();
+    std::time_t lastKnowledgeMtime = 0;
+    long long lastKnowledgeSize = -1;
+
+    void LoadKnowledge()
+    {
+        if (loaded)
+            return;
+        loaded = true;
+        struct stat file = {};
+        if (::stat("/opt/tortoise/data/humanlike-knowledge.tsv", &file) != 0 ||
+            file.st_size > 4000000) return;
+        std::ifstream input("/opt/tortoise/data/humanlike-knowledge.tsv");
+        std::string line;
+        uint32_t lines = 0;
+        size_t bytes = 0;
+        while (std::getline(input, line) && knowledge.size() < 3000 &&
+               ++lines <= 10000 && (bytes += line.size()) <= 4000000)
+        {
+            if (line.empty() || line[0] == '#' || line.size() > 1200)
+                continue;
+            std::vector<std::string> fields;
+            std::stringstream row(line);
+            std::string part;
+            while (std::getline(row, part, '\t'))
+                fields.push_back(part);
+            if (fields.size() != 4 || fields[0].empty() || fields[2].empty() ||
+                fields[2].size() > 230 || fields[3].empty())
+                continue;
+            Knowledge entry;
+            entry.id = fields[0];
+            std::stringstream aliases(fields[1]);
+            while (std::getline(aliases, part, '|'))
+                if (Normalise(part).size() >= 6)
+                    entry.phrases.push_back(Normalise(part));
+            entry.answer = fields[2];
+            entry.source = fields[3];
+            if (!entry.phrases.empty())
+                knowledge.push_back(std::move(entry));
+        }
+    }
+
+    static std::set<std::string> SignificantWords(std::string const& phrase)
+    {
+        static std::set<std::string> const stop = {
+            "what", "which", "where", "when", "why", "how", "does", "are",
+            "can", "you", "your", "the", "then", "that", "this", "for",
+            "with", "from", "about", "some", "have", "has", "into",
+            "there", "them", "they", "would", "could", "should",
+            "and", "who", "its", "out"
+        };
+        std::set<std::string> terms;
+        std::istringstream parts(Normalise(phrase));
+        std::string word;
+        while (parts >> word)
+        {
+            if (word.size() > 5 && word.back() == 's')
+                word.pop_back();
+            if (word.size() >= 3 && !stop.count(word))
+                terms.insert(word);
+        }
+        return terms;
+    }
+
+    bool Lookup(std::string const& text, std::string& answer)
+    {
+        LoadKnowledge();
+        // Literal phrases first, preferring the longest unambiguous match.
+        size_t best = 0;
+        size_t bestLength = 0;
+        bool tied = false;
+        for (size_t i = 0; i < knowledge.size(); ++i)
+            for (std::string const& phrase : knowledge[i].phrases)
+            {
+                if (!Has(text, phrase))
+                    continue;
+                if (phrase.size() > bestLength)
+                {
+                    bestLength = phrase.size();
+                    best = i;
+                    tied = false;
+                }
+                else if (phrase.size() == bestLength && best != i)
+                    tied = true;
+            }
+        if (bestLength)
+        {
+            if (tied)
+                return false;
+            answer = knowledge[best].answer;
+            return true;
+        }
+
+        // Cheap morphology-aware matching for equivalent phrasings.
+        // Require two distinctive words and >=80% alias coverage.
+        // A tie across entries defers to Ollama instead of guessing.
+        std::set<std::string> const words = SignificantWords(text);
+        float bestScore = 0.0f;
+        best = 0;
+        tied = false;
+        for (size_t i = 0; i < knowledge.size(); ++i)
+            for (std::string const& alias : knowledge[i].phrases)
+            {
+                std::set<std::string> const terms = SignificantWords(alias);
+                if (terms.size() < 2)
+                    continue;
+                uint32_t matched = 0;
+                for (std::string const& term : terms)
+                    if (words.count(term))
+                        ++matched;
+                float coverage = static_cast<float>(matched) /
+                    static_cast<float>(terms.size());
+                if (matched < 2 || coverage < 0.80f)
+                    continue;
+                float score = matched * 10.0f + coverage;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = i;
+                    tied = false;
+                }
+                else if (score == bestScore && best != i)
+                    tied = true;
+            }
+        if (bestScore == 0.0f || tied)
+            return false;
+        answer = knowledge[best].answer;
+        return true;
+    }
+
+
+    void Poll()
+    {
+        auto now = std::chrono::steady_clock::now();
+        // Hot-reload the mounted, read-only TSV without rebuilding or
+        // restarting mangosd. This is a bounded 60-second filesystem check.
+        if (now >= nextKnowledgePoll)
+        {
+            nextKnowledgePoll = now + std::chrono::seconds(60);
+            struct stat kb = {};
+            if (::stat("/opt/tortoise/data/humanlike-knowledge.tsv", &kb) == 0 &&
+                (lastKnowledgeMtime != kb.st_mtime ||
+                 lastKnowledgeSize != static_cast<long long>(kb.st_size)))
+            {
+                knowledge.clear();
+                loaded = false;
+                LoadKnowledge();
+                lastKnowledgeMtime = kb.st_mtime;
+                lastKnowledgeSize = static_cast<long long>(kb.st_size);
+            }
+        }
+    }
+};
+inline Catalogue& Mechanics()
+{
+    static Catalogue catalogue;
+    return catalogue;
+}
+
 // An owned, bounded value. No Player/Quest/Item pointers cross into a worker.
 struct GameState
 {
@@ -611,11 +786,13 @@ inline bool FormatFact(Player* speaker, Player* bot, std::string const& message,
 {
     std::string const q = Normalise(message);
     // Player-owned questions must not accidentally answer with bot-owned facts.
-    if (Any(q, {"my", "mine"}) && topic != Topic::NextQuest &&
+    if (Any(q, {"my", "mine", "i"}) && topic != Topic::NextQuest &&
         topic != Topic::Knowledge && topic != Topic::Quests && topic != Topic::Progress)
         return false;
     bool const playerQuest = !Any(q, {"your", "you", "yours"});
     if (privateAllowed && playerQuest && QuestByName(speaker, q, answer)) return true;
+    if (privateAllowed && !playerQuest && QuestByName(bot, q, answer))
+    { answer = "My quest: " + answer; return true; }
     if (PrivateTopic(topic) && !privateAllowed) return false;
             switch (topic)
             {
@@ -740,13 +917,25 @@ inline bool FormatFact(Player* speaker, Player* bot, std::string const& message,
                     if (!SpellReadiness(bot, message, answer)) return false;
                     break;
                 case Topic::Knowledge:
-                    if (!Knowledge().Search(q, answer, speaker)) return false;
+                    if (!Mechanics().Lookup(q, answer) && !Knowledge().Search(q, answer, speaker)) return false;
                     break;
                 default:
                     return false;
             }
 
     return !answer.empty();
+}
+
+// Shared short-lived intent memory, keyed by both human and bot. World thread only.
+struct IntentMemory
+{
+    Topic topic = Topic::None;
+    std::chrono::steady_clock::time_point seen{};
+};
+inline std::map<std::pair<uint64_t, uint64_t>, IntentMemory>& RecentIntents()
+{
+    static std::map<std::pair<uint64_t, uint64_t>, IntentMemory> memory;
+    return memory;
 }
 
 inline GameState ReadState(Player* speaker, Player* bot, std::string const& message,
@@ -765,9 +954,20 @@ inline GameState ReadState(Player* speaker, Player* bot, std::string const& mess
     if (state.usesMana) state.mana = static_cast<uint32_t>(bot->GetPowerPercent(POWER_MANA));
     state.privateAllowed = PrivateScope(speaker->GetGroup() &&
         speaker->GetGroup() == bot->GetGroup(), privateChannel);
+    auto const key = std::make_pair(speaker->GetObjectGuid().GetRawValue(), bot->GetObjectGuid().GetRawValue());
+    auto& memory = RecentIntents();
+    auto const now = std::chrono::steady_clock::now();
+    auto found = memory.find(key);
+    if (previous == Topic::None && found != memory.end() &&
+        now - found->second.seen < std::chrono::seconds(90)) previous = found->second.topic;
     state.intent = Recognise(Normalise(message), message, previous);
     FormatFact(speaker, bot, message, state.intent, state.privateAllowed, state.answer);
     state.answer = Limit(state.answer, 240);
+    if (!state.answer.empty())
+    {
+        if (memory.size() >= 512) memory.clear();
+        memory[key] = {state.intent, now};
+    }
     if (state.privateAllowed)
     {
         uint32_t count = 0;

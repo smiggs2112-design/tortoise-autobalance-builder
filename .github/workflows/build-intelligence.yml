@@ -73,7 +73,11 @@ jobs:
               '  python3 /build/enhancements/enhance_voices.py && \\\n' + needle)
           # Limit make parallelism on smaller hosted CI runners.
           assert 'make -j"$(nproc)"' in content, 'Upstream build command changed: review first'
-          content = content.replace('make -j"$(nproc)"', 'make -j2')
+          preflight = ('make -j2 -f modules/CMakeFiles/modules.dir/build.make '
+              'modules/CMakeFiles/modules.dir/mod-azeroth-voices/src/AzerothVoicesManager.cpp.o '
+              'modules/CMakeFiles/modules.dir/mod-azeroth-voices/src/AzerothVoicesScripts.cpp.o && \\\n'
+              '  make -j2')
+          content = content.replace('make -j"$(nproc)"', preflight)
           p.write_text(content)
           PY
           mkdir -p upstream/enhancements
