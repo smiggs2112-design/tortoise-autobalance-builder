@@ -712,6 +712,22 @@ namespace Deterministic
             if (!IsQuestion(Normalise(message), message))
                 return false;
             Player* bot = Resolve(player, scope, message, whisperTarget);
+            // A player can join the ongoing two-bot discussion in /say
+            // without needing to name a participant.
+            if (!bot && scope == ChatScope::Say &&
+                IntelligenceV4::Any(Normalise(message),
+                    {"what are you talking about", "what was that about",
+                     "what are you two discussing", "what are you discussing"}))
+            {
+                auto scene = conversations.find(player->GetObjectGuid().GetRawValue());
+                if (scene != conversations.end() &&
+                    Clock::now() - scene->second.last < std::chrono::seconds(210))
+                {
+                    Player* participant = ObjectAccessor::FindPlayer(ObjectGuid(scene->second.botGuid));
+                    if (IsPlayableBot(participant) && Near(player, participant))
+                        bot = participant;
+                }
+            }
             if (!bot)
                 return false;
             std::string answer;
@@ -807,6 +823,48 @@ namespace Deterministic
                     }
                     if (!p->IsInCombat() && realPlayers.size() < 12)
                         realPlayers.push_back(p);
+                }
+            }
+
+            // Party wellbeing prompts are advisory only. The existing
+            // TortoiseBots heal, rebuff and ready-check systems own gameplay.
+            // Run even in dungeons, but never during combat or battlegrounds.
+            bool advised = false;
+            if (nextCareForPlayer.size() > 256) nextCareForPlayer.clear();
+            for (Player* player : realPlayers)
+            {
+                if (advised || !player->GetGroup() || !player->FindMap() ||
+                    player->FindMap()->IsBattleGround()) continue;
+                uint64_t id = player->GetObjectGuid().GetRawValue();
+                auto last = nextCareForPlayer.find(id);
+                if (last != nextCareForPlayer.end() && now < last->second) continue;
+                Player* healer = nullptr;
+                Player* tank = nullptr;
+                for (GroupReference* ref = player->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+                {
+                    Player* member = ref->getSource();
+                    if (!IsPlayableBot(member) || member->IsInCombat() || !Near(player, member))
+                        continue;
+                    if (!healer && IntelligenceV4::IsHealer(member)) healer = member;
+                    if (!tank && IntelligenceV4::IsTank(member)) tank = member;
+                }
+                Player* speaker = healer ? healer : tank;
+                if (!speaker) continue;
+                std::string advice;
+                if (healer && healer->GetMaxPower(POWER_MANA) > 0 &&
+                    healer->GetPowerPercent(POWER_MANA) < 25.0f)
+                    advice = "I'm low on mana. Give me a moment before the next pull.";
+                else if (player->GetMaxPower(POWER_MANA) > 0 &&
+                         player->GetPowerPercent(POWER_MANA) < 20.0f)
+                    advice = "You're short on mana. We can wait a moment.";
+                else if (player->GetHealthPercent() < 35.0f && healer)
+                    advice = "Your health is low. We should recover before moving on.";
+                if (advice.empty()) continue;
+                if (Deliver(player, speaker, ChatScope::Party, advice))
+                {
+                    nextCareForPlayer[id] = now + std::chrono::minutes(5);
+                    ++proactiveWarnings;
+                    advised = true;
                 }
             }
 
